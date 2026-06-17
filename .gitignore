@@ -1,0 +1,18 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+
+# 运行时生成
+activation.dat
+错误截图/
+
+# 环境变量（含私钥，绝对不提交）
+.env
+
+# 模板图（在目标机器本地截图）
+templates/*.png
+
+# macOS
+.DS_Store
