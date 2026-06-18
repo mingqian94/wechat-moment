@@ -34,7 +34,15 @@ def is_activated() -> bool:
         cfg = configparser.ConfigParser()
         cfg.read(ACTIVATION_FILE, encoding="utf-8")
         code = cfg.get("activation", "code", fallback="")
-        return _is_valid_format(code)
+        if not _is_valid_format(code):
+            return False
+        # 重新验证 hash，防止手写激活文件绕过
+        prefix = code[:3]
+        code_part = code[4:]
+        for i in range(1, 10000):
+            if _code_hash(prefix, f"{i:04d}") == code_part:
+                return True
+        return False
     except Exception:
         return False
 

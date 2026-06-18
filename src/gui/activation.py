@@ -7,9 +7,15 @@ class ActivationWindow:
     def __init__(self, on_success: Callable[[str], None]):
         self.on_success = on_success
         self.root = tk.Tk()
-        self.root.title("朋友圈助手 - 激活")
+        self.root.title("朋友圈发布助手 - 激活")
         self.root.resizable(False, False)
         self._center(430, 280)
+        try:
+            from logo import get_tkimage
+            self._logo = get_tkimage(128)
+            self.root.iconphoto(True, self._logo)
+        except Exception:
+            pass
         self._build()
 
     def _center(self, w: int, h: int):
@@ -24,7 +30,7 @@ class ActivationWindow:
         root.configure(bg="#f5f5f5")
         pad = {"padx": 24, "pady": 0}
 
-        tk.Label(root, text="朋友圈助手", font=("", 16, "bold"), bg="#f5f5f5").pack(pady=(24, 4))
+        tk.Label(root, text="朋友圈发布助手", font=("", 16, "bold"), bg="#f5f5f5").pack(pady=(24, 4))
         tk.Label(root, text="请输入注册码以激活程序", font=("", 10), fg="#888", bg="#f5f5f5").pack()
 
         tk.Frame(root, height=1, bg="#ddd").pack(fill="x", padx=24, pady=12)
@@ -62,7 +68,7 @@ class ActivationWindow:
             self.status_var.set(f"激活失败：{result['reason']}")
 
     def _buy(self):
-        messagebox.showinfo("购买注册码", "请联系微信 xxxxxx 购买注册码")
+        messagebox.showinfo("购买注册码", "请联系微信 mingqian94 购买注册码")
 
     def run(self):
         self.root.mainloop()

@@ -13,13 +13,20 @@ TEMPLATES_DIR = Path(__file__).parent.parent / "templates"
 MATCH_THRESHOLD = 0.80   # OpenCV 相似度阈值（0-1）
 SCALES = [1.0, 0.9, 0.85, 0.8, 1.1, 1.15]  # 多尺度容错
 
+_template_cache: dict[str, np.ndarray | None] = {}
+
 
 def _load_template(name: str) -> np.ndarray | None:
-    path = TEMPLATES_DIR / name
-    if not path.exists():
-        return None
-    img = cv2.imread(str(path), cv2.IMREAD_COLOR)
-    return img
+    if name not in _template_cache:
+        path = TEMPLATES_DIR / name
+        _template_cache[name] = cv2.imread(str(path), cv2.IMREAD_COLOR) if path.exists() else None
+        if _template_cache[name] is None:
+            print(f"[ImageRecog] 模板文件不存在: {name}")
+    return _template_cache[name]
+
+
+def reload_templates():
+    _template_cache.clear()
 
 
 def _grab_region(x: int, y: int, w: int, h: int) -> np.ndarray:
@@ -35,7 +42,6 @@ def find_template(template_name: str, region: tuple[int, int, int, int] | None =
     """
     tpl = _load_template(template_name)
     if tpl is None:
-        print(f"[ImageRecog] 模板文件不存在: {template_name}")
         return None
 
     if region:

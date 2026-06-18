@@ -102,21 +102,14 @@ class Scheduler:
         self.publish_fn = publish_fn
         self.callbacks = callbacks
         self._running = False
-        self._paused = False
         self._thread: threading.Thread | None = None
         self._consecutive_fail = 0
+        self._publishing = False  # 当前是否有任务正在发布中
 
     def start(self):
         self._running = True
-        self._paused = False
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
-
-    def pause(self):
-        self._paused = True
-
-    def resume(self):
-        self._paused = False
 
     def stop(self):
         self._running = False
@@ -137,13 +130,19 @@ class Scheduler:
             if not self._running:
                 break
 
-            # 暂停检查
-            while self._paused and self._running:
-                time.sleep(1)
+            # 如果上一个任务还在发布中，等待其完成（失败也视为完成）
+            if self._publishing:
+                cb_waiting = self.callbacks.get("on_task_status")
+                if cb_waiting:
+                    cb_waiting(idx, "等待上一个任务完成")
+                self._log(f"等待上一个任务完成后再发布: {task['alias']}")
+                while self._publishing and self._running:
+                    time.sleep(1)
 
             if not self._running:
                 break
 
+            self._publishing = True
             cb_start = self.callbacks.get("on_task_start")
             if cb_start:
                 cb_start(idx, task)
@@ -151,6 +150,7 @@ class Scheduler:
             self._log(f"开始发布: {task['alias']} - {task.get('caption', '')[:20]}")
 
             result = self.publish_fn(task)
+            self._publishing = False
 
             if result.get("success"):
                 self._consecutive_fail = 0
@@ -170,14 +170,6 @@ class Scheduler:
             cb_done = self.callbacks.get("on_task_done")
             if cb_done:
                 cb_done(idx, task, result)
-
-            # 不同账号之间额外间隔
-            if idx < len(self.schedule) - 1:
-                next_task = self.schedule[idx + 1]
-                if next_task["alias"] != task["alias"]:
-                    gap = random.randint(10, 15) * 60
-                    self._log(f"账号切换，等待 {gap // 60} 分钟...")
-                    self._sleep_interruptible(gap)
 
         cb_all = self.callbacks.get("on_all_done")
         if cb_all:

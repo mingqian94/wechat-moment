@@ -4,7 +4,6 @@ from datetime import datetime
 from pathlib import Path
 
 import pyautogui
-import pyperclip
 
 from window_manager import activate_window, get_window_rect
 from image_recognition import find_and_click, take_screenshot
@@ -94,39 +93,40 @@ def execute_publish(task: dict) -> dict:
 
 
 def _select_images_dialog(image_paths: list[str]) -> bool:
-    """等待文件选择对话框出现，输入图片路径后确认。"""
+    """等待微信弹出的文件选择对话框，用 WM_SETTEXT 直接写入路径后确认。仅 Windows 有效。"""
+    if not IS_WINDOWS:
+        return True
     import ctypes
-    # 等待系统文件对话框
+
+    # 用 class 名匹配比标题更可靠，#32770 是 Windows 标准文件对话框
     deadline = time.time() + 8
     dialog_hwnd = 0
     while time.time() < deadline:
-        # 查找常见文件选择对话框标题
-        for title in ["打开", "Open", "选择文件"]:
-            hwnd = ctypes.windll.user32.FindWindowW(None, title)
-            if hwnd:
-                dialog_hwnd = hwnd
-                break
+        dialog_hwnd = ctypes.windll.user32.FindWindowW("#32770", None)
         if dialog_hwnd:
             break
-        time.sleep(0.5)
+        time.sleep(0.3)
 
     if not dialog_hwnd:
         return False
 
-    # 构造多文件路径字符串（双引号空格分隔）
-    path_str = " ".join(f'"{p}"' for p in image_paths)
+    # 多图用双引号空格分隔，单图直接路径
+    path_str = " ".join(f'"{p}"' for p in image_paths) if len(image_paths) > 1 else image_paths[0]
 
-    # 找到文件名输入框（Edit1）并填入路径
-    edit_hwnd = ctypes.windll.user32.FindWindowExW(dialog_hwnd, None, "Edit", None)
-    if not edit_hwnd:
+    # 文件名输入框层级：ComboBoxEx32 > ComboBox > Edit，找不到则直接找 Edit
+    combo_ex = ctypes.windll.user32.FindWindowExW(dialog_hwnd, None, "ComboBoxEx32", None)
+    combo = ctypes.windll.user32.FindWindowExW(combo_ex, None, "ComboBox", None) if combo_ex else 0
+    edit = ctypes.windll.user32.FindWindowExW(combo, None, "Edit", None) if combo else 0
+    if not edit:
+        edit = ctypes.windll.user32.FindWindowExW(dialog_hwnd, None, "Edit", None)
+    if not edit:
         return False
 
-    pyperclip.copy(path_str)
+    WM_SETTEXT = 0x000C
+    ctypes.windll.user32.SendMessageW(edit, WM_SETTEXT, 0, path_str)
+    time.sleep(0.2)
     ctypes.windll.user32.SetForegroundWindow(dialog_hwnd)
-    time.sleep(0.3)
-    pyautogui.hotkey("ctrl", "a")
-    pyautogui.hotkey("ctrl", "v")
-    time.sleep(0.3)
+    time.sleep(0.1)
     pyautogui.press("enter")
     return True
 
