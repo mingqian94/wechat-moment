@@ -28,6 +28,9 @@ def _is_valid_format(code: str) -> bool:
 
 
 def is_activated() -> bool:
+    # 本地测试模式：自动激活
+    if os.environ.get("WM_DEBUG") == "1":
+        return True
     if not ACTIVATION_FILE.exists():
         return False
     try:

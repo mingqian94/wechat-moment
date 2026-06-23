@@ -29,16 +29,56 @@ def reload_templates():
     _template_cache.clear()
 
 
-def _grab_region(x: int, y: int, w: int, h: int) -> np.ndarray:
+def _grab_region(x: int, y: int, w: int, h: int, hwnd: int = None) -> np.ndarray:
+    """截取区域，支持通过 hwnd 直接截取窗口内容（无视遮挡）"""
+    if hwnd and IS_WINDOWS:
+        try:
+            import win32gui
+            import win32ui
+            import win32con
+            from ctypes import windll
+
+            # 获取窗口 DC
+            hwndDC = win32gui.GetWindowDC(hwnd)
+            mfcDC = win32ui.CreateDCFromHandle(hwndDC)
+            saveDC = mfcDC.CreateCompatibleDC()
+
+            saveBitMap = win32ui.CreateBitmap()
+            saveBitMap.CreateCompatibleBitmap(mfcDC, w, h)
+            saveDC.SelectObject(saveBitMap)
+
+            # 使用 PrintWindow 截取窗口内容
+            windll.user32.PrintWindow(hwnd, saveDC.GetSafeHdc(), 2)
+
+            # 转换为 numpy
+            bmpinfo = saveBitMap.GetInfo()
+            bmpstr = saveBitMap.GetBitmapBits(True)
+            img = np.frombuffer(bmpstr, dtype=np.uint8)
+            img.shape = (h, w, 4)
+            img = cv2.cvtColor(img, cv2.COLOR_BGRA2BGR)
+
+            # 清理
+            win32gui.DeleteObject(saveBitMap.GetHandle())
+            saveDC.DeleteDC()
+            mfcDC.DeleteDC()
+            win32gui.ReleaseDC(hwnd, hwndDC)
+
+            return img
+        except Exception as e:
+            print(f"[ImageRecog] 窗口截图失败，回退到屏幕截图: {e}")
+
+    # 回退：屏幕截图
     screenshot = ImageGrab.grab(bbox=(x, y, x + w, y + h))
     return cv2.cvtColor(np.array(screenshot), cv2.COLOR_RGB2BGR)
 
 
-def find_template(template_name: str, region: tuple[int, int, int, int] | None = None
+def find_template(template_name: str, region: tuple[int, int, int, int] | None = None,
+                  hwnd: int = None
                   ) -> tuple[int, int] | None:
     """
     在 region（x, y, w, h）内查找模板图，返回匹配中心点的屏幕坐标 (abs_x, abs_y)。
     region=None 则全屏搜索。
+    hwnd: 指定窗口句柄，可无视遮挡直接截取窗口内容
     """
     tpl = _load_template(template_name)
     if tpl is None:
@@ -51,7 +91,7 @@ def find_template(template_name: str, region: tuple[int, int, int, int] | None =
         rx, ry, rw, rh = 0, 0, screen_w, screen_h
 
     if IS_WINDOWS:
-        screen = _grab_region(rx, ry, rw, rh)
+        screen = _grab_region(rx, ry, rw, rh, hwnd=hwnd)
     else:
         # Mac 开发模式：直接用 ImageGrab
         screenshot = ImageGrab.grab(bbox=(rx, ry, rx + rw, ry + rh))
@@ -85,11 +125,11 @@ def find_template(template_name: str, region: tuple[int, int, int, int] | None =
 
 
 def find_and_click(template_name: str, region: tuple[int, int, int, int] | None = None,
-                   timeout: float = 5.0) -> bool:
-    """循环查找模板并点击，超时返回 False。"""
+                   timeout: float = 5.0, hwnd: int = None) -> bool:
+    """循环查找模板并点击，超时返回 False。hwnd 用于直接截取窗口内容。"""
     deadline = time.time() + timeout
     while time.time() < deadline:
-        pos = find_template(template_name, region)
+        pos = find_template(template_name, region, hwnd=hwnd)
         if pos:
             if IS_WINDOWS:
                 pyautogui.click(pos[0], pos[1])

@@ -14,6 +14,11 @@ class ActivationWindow:
             from logo import get_tkimage
             self._logo = get_tkimage(128)
             self.root.iconphoto(True, self._logo)
+            # 同时设置任务栏图标（Windows 需要额外处理）
+            import platform
+            if platform.system() == "Windows":
+                import ctypes
+                ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("wechat-moment-publisher")
         except Exception:
             pass
         self._build()

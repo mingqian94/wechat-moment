@@ -55,24 +55,24 @@ def execute_publish(task: dict) -> dict:
     rect = get_window_rect(hwnd)
 
     # ── Step 2: 点击朋友圈入口 ────────────────────────────
-    if not find_and_click("moments_btn.png", rect, timeout=6):
+    if not find_and_click("moments_btn.png", rect, timeout=6, hwnd=hwnd):
         _error_shot(hwnd, "moments_btn")
         return {"success": False, "reason": "找不到朋友圈按钮"}
     _sleep()
 
     # ── Step 3: 点击相机图标 ──────────────────────────────
-    if not find_and_click("camera_btn.png", rect, timeout=6):
+    if not find_and_click("camera_btn.png", rect, timeout=6, hwnd=hwnd):
         _error_shot(hwnd, "camera_btn")
         return {"success": False, "reason": "找不到相机图标"}
     _sleep()
 
-    # ── Step 4: 点击从相册选择 ────────────────────────────
-    if not find_and_click("album_btn.png", rect, timeout=6):
-        _error_shot(hwnd, "album_btn")
-        return {"success": False, "reason": "找不到相册选择"}
-    _sleep()
+    # ── Step 4: 文件选择对话框 ────────────────────────────
+    # 新版微信直接弹出文件管理器，没有"从相册选择"中间步骤
+    # 老版微信需要先点"album_btn.png"，如果找不到则跳过
+    album_clicked = find_and_click("album_btn.png", rect, timeout=2, hwnd=hwnd)
+    if album_clicked:
+        _sleep()
 
-    # ── Step 5: 文件选择对话框 ────────────────────────────
     if not _select_images_dialog(images):
         _error_shot(hwnd, "file_dialog")
         return {"success": False, "reason": "图片选择失败"}
@@ -84,7 +84,7 @@ def execute_publish(task: dict) -> dict:
     _sleep()
 
     # ── Step 7: 点击发表 ──────────────────────────────────
-    if not find_and_click("post_btn.png", rect, timeout=10):
+    if not find_and_click("post_btn.png", rect, timeout=10, hwnd=hwnd):
         _error_shot(hwnd, "post_btn")
         return {"success": False, "reason": "找不到发表按钮（可能发表按钮为灰色）"}
 

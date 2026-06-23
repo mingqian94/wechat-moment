@@ -22,16 +22,21 @@ class MainWindow:
         self._is_running = False
         self._is_paused = False
         self._log_queue: queue.Queue = queue.Queue()
-        self._cmd_queue: queue.Queue = queue.Queue()  # 后台线程投递 UI 更新
+        self._cmd_queue: queue.Queue = queue.Queue()
 
         self.root = tk.Tk()
         self.root.title("朋友圈发布助手 v1.3")
+        # 允许拖拽缩放
         self.root.minsize(700, 620)
         self._center(720, 660)
         try:
             from logo import get_tkimage
             self._logo = get_tkimage(128)
             self.root.iconphoto(True, self._logo)
+            import platform
+            if platform.system() == "Windows":
+                import ctypes
+                ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("wechat-moment-publisher")
         except Exception:
             pass
         self._build()
@@ -39,11 +44,24 @@ class MainWindow:
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
 
     def _center(self, w: int, h: int):
-        self.root.geometry(f"{w}x{h}")
+        """根据屏幕尺寸自适应，窗口占屏幕面积约 1/3"""
         self.root.update_idletasks()
-        x = (self.root.winfo_screenwidth() - w) // 2
-        y = (self.root.winfo_screenheight() - h) // 2
-        self.root.geometry(f"{w}x{h}+{x}+{y}")
+        screen_w = self.root.winfo_screenwidth()
+        screen_h = self.root.winfo_screenheight()
+
+        # 计算占屏幕 1/3 面积的尺寸（保持 16:10 比例）
+        target_area = screen_w * screen_h / 3
+        aspect = 16 / 10
+        h_new = int((target_area / aspect) ** 0.5)
+        w_new = int(h_new * aspect)
+
+        # 限制最大最小尺寸
+        w_new = max(700, min(w_new, screen_w - 100))
+        h_new = max(620, min(h_new, screen_h - 100))
+
+        x = (screen_w - w_new) // 2
+        y = (screen_h - h_new) // 2
+        self.root.geometry(f"{w_new}x{h_new}+{x}+{y}")
 
     def _build(self):
         root = self.root
@@ -69,35 +87,37 @@ class MainWindow:
         self.acct_frame_inner.pack(fill="x", padx=8, pady=6)
         self._refresh_accounts()
 
-        # ── 任务操作 ──────────────────────────────────────
-        btn_frame = tk.Frame(root, bg="#f5f5f5")
-        btn_frame.pack(fill="x", padx=16, pady=8)
-        ttk.Button(btn_frame, text="＋ 添加任务", command=self._add_task).pack(side="left", padx=(0, 6))
+        # ── 主内容区（任务列表 + 添加任务面板）───────────────
+        self.main_paned = tk.PanedWindow(root, orient="horizontal", bg="#ddd")
+        self.main_paned.pack(fill="both", expand=True, padx=16, pady=8)
 
-        # 执行控制区，加分隔和说明
-        tk.Frame(btn_frame, width=1, bg="#ccc").pack(side="left", fill="y", padx=8, pady=4)
-        ctrl_wrap = tk.Frame(btn_frame, bg="#f5f5f5")
-        ctrl_wrap.pack(side="left")
-        ctrl_btns = tk.Frame(ctrl_wrap, bg="#f5f5f5")
-        ctrl_btns.pack()
-        self.start_btn = ttk.Button(ctrl_btns, text="▶ 开始全部", command=self._start)
-        self.start_btn.pack(side="left", padx=(0, 4))
-        ttk.Button(ctrl_btns, text="⏹ 全部停止", command=self._stop).pack(side="left", padx=4)
+        # 左侧：任务列表
+        left_frame = tk.Frame(self.main_paned, bg="#f5f5f5")
+        self.main_paned.add(left_frame, minsize=400)
 
-        # ── 任务列表标题 + 进度 + 编辑删除 ───────────────
-        task_hdr = tk.Frame(root, bg="#f5f5f5")
-        task_hdr.pack(fill="x", padx=16, pady=(8, 2))
+        # 任务列表标题 + 操作按钮
+        task_hdr = tk.Frame(left_frame, bg="#f5f5f5")
+        task_hdr.pack(fill="x", pady=(0, 2))
         tk.Label(task_hdr, text="今日任务", font=("", 10, "bold"), bg="#f5f5f5").pack(side="left")
         self.progress_var = tk.StringVar(value="0 / 0")
         tk.Label(task_hdr, textvariable=self.progress_var, font=("", 9), bg="#f5f5f5", fg="#888").pack(side="left", padx=(8, 0))
         ttk.Button(task_hdr, text="删除", command=self._delete_selected).pack(side="right", padx=(4, 0))
         ttk.Button(task_hdr, text="编辑", command=self._edit_selected).pack(side="right", padx=4)
-        list_frame = tk.Frame(root, bg="#f5f5f5")
-        list_frame.pack(fill="both", padx=16, expand=False)
+
+        # 执行控制按钮
+        ctrl_frame = tk.Frame(left_frame, bg="#f5f5f5")
+        ctrl_frame.pack(fill="x", pady=4)
+        ttk.Button(ctrl_frame, text="＋ 添加任务", command=self._toggle_add_panel).pack(side="left", padx=(0, 6))
+        self.start_btn = ttk.Button(ctrl_frame, text="▶ 开始全部", command=self._start)
+        self.start_btn.pack(side="left", padx=(0, 4))
+        ttk.Button(ctrl_frame, text="⏹ 全部停止", command=self._stop).pack(side="left", padx=4)
+
+        list_frame = tk.Frame(left_frame, bg="#f5f5f5")
+        list_frame.pack(fill="both", expand=True)
 
         cols = ("time", "alias", "media", "caption", "status")
         self.tree = ttk.Treeview(list_frame, columns=cols, show="headings", height=8, selectmode="browse")
-        headers = {"time": ("时间", 55), "alias": ("账号", 45), "media": ("素材", 120),
+        headers = {"time": ("时间", 55), "alias": ("账号", 80), "media": ("素材", 120),
                    "caption": ("文案", 260), "status": ("状态", 70)}
         for col, (label, width) in headers.items():
             self.tree.heading(col, text=label)
@@ -109,12 +129,12 @@ class MainWindow:
         vsb.pack(side="right", fill="y")
         self.tree.tag_configure("failed", foreground="#c0392b")
 
-        # 鼠标悬停 tooltip 显示完整内容
+        # 鼠标悬停 tooltip
         self._tooltip = tk.Label(root, bg="#fffbe6", relief="solid", bd=1, font=("", 9), wraplength=400)
         self.tree.bind("<Motion>", self._on_tree_motion)
         self.tree.bind("<Leave>", lambda e: self._tooltip.place_forget())
 
-        # 右键菜单：编辑 / 重发 / 删除
+        # 右键菜单
         self._ctx_menu = tk.Menu(root, tearoff=0)
         self._ctx_menu.add_command(label="编辑此任务", command=self._edit_selected)
         self._ctx_menu.add_command(label="重发此任务", command=self._retry_selected)
@@ -124,18 +144,263 @@ class MainWindow:
         self.tree.bind("<Button-3>", self._show_ctx_menu)
         self.tree.bind("<Double-1>", lambda e: self._edit_selected())
 
+        # 右侧：添加/编辑任务面板（默认隐藏）
+        self.add_panel = tk.Frame(self.main_paned, bg="#f5f5f5", relief="solid", bd=1)
+        self._build_add_panel()
+
         # ── 日志 ──────────────────────────────────────────
         tk.Label(root, text="运行日志", font=("", 10, "bold"), bg="#f5f5f5", anchor="w").pack(
             fill="x", padx=16, pady=(8, 2))
         log_frame = tk.Frame(root, bg="#f5f5f5")
         log_frame.pack(fill="both", expand=True, padx=16, pady=(0, 12))
-        self.log_text = tk.Text(log_frame, height=8, font=("Courier", 9),
+        self.log_text = tk.Text(log_frame, height=6, font=("Courier", 9),
                                 state="disabled", bg="#1e1e1e", fg="#d4d4d4",
                                 relief="flat", wrap="word")
         log_vsb = ttk.Scrollbar(log_frame, orient="vertical", command=self.log_text.yview)
         self.log_text.configure(yscrollcommand=log_vsb.set)
         self.log_text.pack(side="left", fill="both", expand=True)
         log_vsb.pack(side="right", fill="y")
+
+    def _build_add_panel(self):
+        """构建内嵌的添加任务面板，带滚动条支持"""
+        panel = self.add_panel
+        pad_x = 16
+
+        # 创建 Canvas + 滚动条实现可滚动面板
+        canvas = tk.Canvas(panel, bg="#f5f5f5", highlightthickness=0)
+        scrollbar_y = ttk.Scrollbar(panel, orient="vertical", command=canvas.yview)
+        scrollbar_x = ttk.Scrollbar(panel, orient="horizontal", command=canvas.xview)
+        canvas.configure(yscrollcommand=scrollbar_y.set, xscrollcommand=scrollbar_x.set)
+
+        scrollbar_y.pack(side="right", fill="y")
+        scrollbar_x.pack(side="bottom", fill="x")
+        canvas.pack(side="left", fill="both", expand=True)
+
+        # 在 Canvas 中创建可滚动框架
+        self.add_panel_inner = tk.Frame(canvas, bg="#f5f5f5")
+        canvas_window = canvas.create_window((0, 0), window=self.add_panel_inner, anchor="nw")
+
+        def _on_frame_configure(event=None):
+            canvas.configure(scrollregion=canvas.bbox("all"))
+            # 确保内嵌框架宽度与 Canvas 一致
+            canvas.itemconfig(canvas_window, width=canvas.winfo_width())
+
+        self.add_panel_inner.bind("<Configure>", _on_frame_configure)
+        canvas.bind("<Configure>", _on_frame_configure)
+
+        # 鼠标滚轮支持
+        def _on_mousewheel(event):
+            canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+        canvas.bind_all("<MouseWheel>", _on_mousewheel)
+
+        # 使用内嵌框架作为实际容器
+        panel = self.add_panel_inner
+
+        def row_label(text, pady=(10, 2)):
+            tk.Label(panel, text=text, font=("", 10, "bold"), bg="#f5f5f5", anchor="w").pack(
+                fill="x", padx=pad_x, pady=pady)
+
+        # 标题
+        self.add_panel_title = tk.Label(panel, text="添加任务", font=("", 12, "bold"),
+                                        bg="#f5f5f5", fg="#4a7c59")
+        self.add_panel_title.pack(fill="x", padx=pad_x, pady=(12, 8))
+
+        # 素材文件夹
+        row_label("素材文件夹")
+        img_frame = tk.Frame(panel, bg="#f5f5f5")
+        img_frame.pack(fill="x", padx=pad_x)
+        self.img_label = tk.Label(img_frame, text="未选择", font=("", 9), fg="#888", bg="#f5f5f5")
+        self.img_label.pack(side="left")
+        ttk.Button(img_frame, text="选择文件夹...", command=self._select_folder).pack(side="right")
+
+        self.file_list_frame = tk.Frame(panel, bg="#f5f5f5")
+        self.file_list_frame.pack(fill="x", padx=pad_x, pady=(4, 0))
+
+        # 账号多选
+        row_label("账号（可多选）")
+        self.acct_select_frame = tk.Frame(panel, bg="#f5f5f5")
+        self.acct_select_frame.pack(fill="x", padx=pad_x)
+        self._refresh_account_checkboxes()
+
+        # 文案
+        row_label("文案")
+        self.caption_text = tk.Text(panel, height=4, font=("", 10), wrap="word", relief="solid", bd=1)
+        self.caption_text.pack(fill="x", padx=pad_x)
+
+        # 发布时段
+        row_label("发布时段（至少 10 分钟）")
+        time_frame = tk.Frame(panel, bg="#f5f5f5")
+        time_frame.pack(fill="x", padx=pad_x)
+        self.start_var = tk.StringVar(value="09:00")
+        self.end_var = tk.StringVar(value="12:00")
+        ttk.Entry(time_frame, textvariable=self.start_var, width=7).pack(side="left")
+        tk.Label(time_frame, text=" — ", bg="#f5f5f5").pack(side="left")
+        ttk.Entry(time_frame, textvariable=self.end_var, width=7).pack(side="left")
+        tk.Label(panel, text="⚠ 同一台电脑高频发布可能被微信限制",
+                 font=("", 8), fg="#e67e22", bg="#f5f5f5", anchor="w").pack(
+            fill="x", padx=pad_x, pady=(2, 0))
+
+        # 按钮
+        btn_frame = tk.Frame(panel, bg="#f5f5f5")
+        btn_frame.pack(pady=14)
+        ttk.Button(btn_frame, text="确  定", width=10, command=self._confirm_add).pack(side="left", padx=6)
+        ttk.Button(btn_frame, text="取  消", width=10, command=self._hide_add_panel).pack(side="left", padx=6)
+
+    def _refresh_account_checkboxes(self):
+        """刷新账号多选框"""
+        for w in self.acct_select_frame.winfo_children():
+            w.destroy()
+        self._alias_vars: dict[str, tk.BooleanVar] = {}
+        aliases = [w.get("alias", f"微信-{i+1}") for i, w in enumerate(self.windows)] or ["微信-1"]
+        for alias in aliases:
+            var = tk.BooleanVar(value=True)
+            self._alias_vars[alias] = var
+            tk.Checkbutton(self.acct_select_frame, text=alias, variable=var,
+                           bg="#f5f5f5", font=("", 10)).pack(side="left", padx=(0, 8))
+
+    def _toggle_add_panel(self):
+        """切换添加任务面板的显示/隐藏"""
+        if self.add_panel in self.main_paned.panes():
+            self._hide_add_panel()
+        else:
+            self._show_add_panel()
+
+    def _show_add_panel(self):
+        """显示添加任务面板"""
+        self._reset_add_panel()
+        self.add_panel_title.config(text="添加任务")
+        self._edit_idx = None
+        self.main_paned.add(self.add_panel, minsize=280)
+        self._refresh_account_checkboxes()
+
+    def _hide_add_panel(self):
+        """隐藏添加任务面板"""
+        if self.add_panel in self.main_paned.panes():
+            self.main_paned.remove(self.add_panel)
+
+    def _reset_add_panel(self):
+        """重置添加面板状态"""
+        self.selected_images = []
+        self._folder = ""
+        self.img_label.config(text="未选择", fg="#888")
+        for w in self.file_list_frame.winfo_children():
+            w.destroy()
+        self.caption_text.delete("1.0", "end")
+        self.start_var.set("09:00")
+        self.end_var.set("12:00")
+
+    def _select_folder(self):
+        from tkinter import filedialog
+        folder = filedialog.askdirectory(title="选择素材文件夹（文件名 01-09 决定顺序）")
+        if not folder:
+            return
+        exts = {".jpg", ".jpeg", ".png", ".bmp", ".mp4", ".mov"}
+        files = sorted(f for f in os.listdir(folder) if os.path.splitext(f)[1].lower() in exts)
+        if not files:
+            messagebox.showwarning("提示", "该文件夹内没有图片或视频")
+            return
+        if len(files) > 9:
+            messagebox.showwarning("提示", f"文件夹内有 {len(files)} 个文件，微信最多发9个，已自动取前9个")
+            files = files[:9]
+        self._folder = folder
+        self.selected_images = [os.path.join(folder, f) for f in files]
+        self.img_label.config(text=self._media_label(), fg="#333")
+        self._refresh_file_list()
+
+    def _media_label(self) -> str:
+        imgs = sum(1 for f in self.selected_images
+                   if os.path.splitext(f)[1].lower() in {".jpg", ".jpeg", ".png", ".bmp"})
+        vids = len(self.selected_images) - imgs
+        folder = os.path.basename(self._folder) or self._folder
+        parts = []
+        if imgs:
+            parts.append(f"{imgs}图")
+        if vids:
+            parts.append(f"{vids}视频")
+        return f"{folder}  ({' '.join(parts)})"
+
+    def _refresh_file_list(self):
+        for w in self.file_list_frame.winfo_children():
+            w.destroy()
+        for i, path in enumerate(self.selected_images):
+            name = os.path.basename(path)
+            ext = os.path.splitext(name)[1].lower()
+            icon = "🎬" if ext in {".mp4", ".mov"} else "🖼"
+            tk.Label(self.file_list_frame, text=f"{icon} {i+1}. {name}",
+                     font=("", 9), fg="#555", bg="#f5f5f5", anchor="w").pack(fill="x")
+
+    def _confirm_add(self):
+        from datetime import datetime, timedelta
+        import random
+
+        if not getattr(self, 'selected_images', []):
+            messagebox.showwarning("提示", "请选择素材文件夹")
+            return
+        caption = self.caption_text.get("1.0", "end").strip()
+        if not caption:
+            messagebox.showwarning("提示", "请输入文案")
+            return
+        selected_aliases = [a for a, v in self._alias_vars.items() if v.get()]
+        if not selected_aliases:
+            messagebox.showwarning("提示", "请至少选择一个账号")
+            return
+
+        t_start = self._parse_time(self.start_var.get())
+        t_end = self._parse_time(self.end_var.get())
+        if not t_start or not t_end:
+            messagebox.showwarning("提示", "时间格式错误，请填写 HH:MM")
+            return
+        now = datetime.now().replace(second=0, microsecond=0)
+        if t_start < now:
+            messagebox.showwarning("提示", f"开始时间不能早于当前时间（{now.strftime('%H:%M')}）")
+            return
+        if (t_end - t_start).total_seconds() < 10 * 60:
+            messagebox.showwarning("提示", "时段至少 10 分钟")
+            return
+
+        slot_sec = int((t_end - t_start).total_seconds())
+        n = len(selected_aliases)
+        min_gap = 5 * 60
+        times = []
+        attempts = 0
+        while len(times) < n and attempts < 2000:
+            attempts += 1
+            t = t_start + timedelta(seconds=random.randint(0, slot_sec))
+            if all(abs((t - x).total_seconds()) >= min_gap for x in times):
+                times.append(t)
+        times.sort()
+        if len(times) < n:
+            step = slot_sec / n if n > 1 else slot_sec / 2
+            times = [t_start + timedelta(seconds=step * i) for i in range(n)]
+
+        tasks = []
+        for alias, t in zip(selected_aliases, times):
+            tasks.append({
+                "alias": alias,
+                "aliases": selected_aliases,
+                "images": self.selected_images,
+                "caption": caption,
+                "prefer_time": t.strftime("%H:%M"),
+                "scheduled_time": t,
+                "scheduled_str": t.strftime("%H:%M"),
+                "status": "待发布",
+            })
+
+        if self._edit_idx is not None:
+            self.tasks[self._edit_idx:self._edit_idx+1] = tasks
+        else:
+            self.tasks.extend(tasks)
+
+        self._refresh_tree()
+        self._hide_add_panel()
+
+    def _parse_time(self, s: str):
+        from datetime import datetime
+        try:
+            t = datetime.strptime(s.strip(), "%H:%M")
+            return datetime.today().replace(hour=t.hour, minute=t.minute, second=0, microsecond=0)
+        except ValueError:
+            return None
 
     # ── 账号显示 ──────────────────────────────────────────
     def _refresh_accounts(self):
@@ -145,26 +410,43 @@ class MainWindow:
             tk.Label(self.acct_frame_inner, text="⚠ 未检测到微信窗口，请先用多开工具登录账号",
                      fg="#c0392b", bg="#f5f5f5", font=("", 9)).pack(anchor="w")
             return
-        for i, win in enumerate(self.windows):
-            alias = win.get("alias") or f"A{i+1}"
-            card = tk.Frame(self.acct_frame_inner, bg="#fff", relief="solid", bd=1, width=90, height=50)
+        for win in self.windows:
+            alias = win.get("alias") or "微信"
+            card = tk.Frame(self.acct_frame_inner, bg="#fff", relief="solid", bd=1, width=80, height=80)
             card.pack_propagate(False)
             card.pack(side="left", padx=6, pady=4)
-            tk.Label(card, text=alias, font=("", 12, "bold"), bg="#fff").pack(pady=(6, 0))
-            tk.Label(card, text="在线", font=("", 8), fg="#27ae60", bg="#fff").pack()
+
+            # 显示头像
+            avatar_bytes = win.get("avatar_bytes")
+            if avatar_bytes:
+                try:
+                    from PIL import Image, ImageTk
+                    import io
+                    img = Image.open(io.BytesIO(avatar_bytes))
+                    img = img.resize((48, 48), Image.LANCZOS)
+                    photo = ImageTk.PhotoImage(img)
+                    lbl = tk.Label(card, image=photo, bg="#fff")
+                    lbl.image = photo  # 保持引用
+                    lbl.pack(pady=(4, 0))
+                except Exception:
+                    tk.Label(card, text="👤", font=("", 20), bg="#fff").pack(pady=(4, 0))
+            else:
+                tk.Label(card, text="👤", font=("", 20), bg="#fff").pack(pady=(4, 0))
+
+            tk.Label(card, text=alias, font=("", 8), bg="#fff").pack()
 
     @property
     def selected_aliases(self) -> list[str]:
-        return [w.get("alias", f"A{i+1}") for i, w in enumerate(self.windows)]
+        return [w.get("alias", f"微信-{i+1}") for i, w in enumerate(self.windows)]
 
     def update_accounts(self, windows: list[dict]):
         self.windows = windows
         self._refresh_accounts()
+        self._refresh_account_checkboxes()
 
     # ── 任务操作 ──────────────────────────────────────────
     def _add_task(self):
-        aliases = [w.get("alias", f"A{i+1}") for i, w in enumerate(self.windows)] or ["A1", "A2", "A3"]
-        self.on_add_task(aliases)
+        self._show_add_panel()
 
     def add_task(self, tasks: list[dict]):
         self.tasks.extend(tasks)
@@ -240,14 +522,25 @@ class MainWindow:
         if not (0 <= idx < len(self.tasks)):
             return
         task = self.tasks[idx]
-        aliases = [w.get("alias", f"A{i+1}") for i, w in enumerate(self.windows)] or ["A1", "A2", "A3"]
+        self._edit_idx = idx
 
-        def on_confirm(updated_list: list[dict]):
-            self.tasks[idx:idx+1] = updated_list
-            self._refresh_tree()
+        # 填充编辑数据
+        self._reset_add_panel()
+        self.add_panel_title.config(text="编辑任务")
+        self.selected_images = task.get("images", [])
+        self._folder = os.path.dirname(self.selected_images[0]) if self.selected_images else ""
+        self.img_label.config(text=self._media_label(), fg="#333")
+        self._refresh_file_list()
+        self.caption_text.insert("1.0", task.get("caption", ""))
+        time_str = task.get("scheduled_str", task.get("prefer_time", ""))
+        self.start_var.set(time_str)
+        self.end_var.set(time_str)
 
-        from gui.add_task import AddTaskDialog
-        AddTaskDialog(parent=self.root, account_aliases=aliases, on_confirm=on_confirm, task=task)
+        # 设置账号选择
+        for alias, var in self._alias_vars.items():
+            var.set(alias == task.get("alias", ""))
+
+        self.main_paned.add(self.add_panel, minsize=280)
 
     def _show_ctx_menu(self, event):
         item = self.tree.identify_row(event.y)
@@ -255,7 +548,6 @@ class MainWindow:
             self.tree.selection_set(item)
             idx = self.tree.index(item)
             task = self.tasks[idx] if 0 <= idx < len(self.tasks) else {}
-            # 只有失败任务才显示重发
             state = "normal" if task.get("status", "").startswith("失败") else "disabled"
             self._ctx_menu.entryconfig("重发此任务", state=state)
             self._ctx_menu.post(event.x_root, event.y_root)
@@ -299,7 +591,6 @@ class MainWindow:
         if not self.tasks:
             messagebox.showinfo("提示", "请先添加任务")
             return
-        # 计算最晚发布时间
         times = [t.get("scheduled_str", "") for t in self.tasks if t.get("scheduled_str")]
         end_time = max(times) if times else ""
         tip = "发布过程中程序将自动控制鼠标和键盘操作微信，请勿使用电脑。"
