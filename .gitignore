@@ -16,3 +16,6 @@ templates/*.png
 
 # macOS
 .DS_Store
+
+# 本地工具配置（非项目内容）
+.claude/

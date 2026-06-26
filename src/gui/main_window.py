@@ -26,9 +26,8 @@ class MainWindow:
 
         self.root = tk.Tk()
         self.root.title("朋友圈发布助手 v1.3")
-        # 允许拖拽缩放
-        self.root.minsize(700, 620)
-        self._center(720, 660)
+        self.root.minsize(900, 680)
+        self._center(960, 720)
         try:
             from logo import get_tkimage
             self._logo = get_tkimage(128)
@@ -44,20 +43,29 @@ class MainWindow:
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
 
     def _center(self, w: int, h: int):
-        """根据屏幕尺寸自适应，窗口占屏幕面积约 1/3"""
+        """根据屏幕尺寸自适应，窗口打开即正合适"""
         self.root.update_idletasks()
         screen_w = self.root.winfo_screenwidth()
         screen_h = self.root.winfo_screenheight()
 
-        # 计算占屏幕 1/3 面积的尺寸（保持 16:10 比例）
-        target_area = screen_w * screen_h / 3
-        aspect = 16 / 10
-        h_new = int((target_area / aspect) ** 0.5)
-        w_new = int(h_new * aspect)
+        # 根据屏幕分辨率选择合适的窗口比例
+        if screen_w >= 2560:
+            w_ratio, h_ratio = 0.55, 0.70
+        elif screen_w >= 1920:
+            w_ratio, h_ratio = 0.65, 0.78
+        else:
+            w_ratio, h_ratio = 0.75, 0.82
 
-        # 限制最大最小尺寸
-        w_new = max(700, min(w_new, screen_w - 100))
-        h_new = max(620, min(h_new, screen_h - 100))
+        w_new = int(screen_w * w_ratio)
+        h_new = int(screen_h * h_ratio)
+
+        # 最小尺寸（确保所有内容完整显示）
+        w_new = max(w_new, 960)
+        h_new = max(h_new, 720)
+
+        # 确保不超出屏幕
+        w_new = min(w_new, screen_w - 60)
+        h_new = min(h_new, screen_h - 60)
 
         x = (screen_w - w_new) // 2
         y = (screen_h - h_new) // 2
@@ -101,8 +109,10 @@ class MainWindow:
         tk.Label(task_hdr, text="今日任务", font=("", 10, "bold"), bg="#f5f5f5").pack(side="left")
         self.progress_var = tk.StringVar(value="0 / 0")
         tk.Label(task_hdr, textvariable=self.progress_var, font=("", 9), bg="#f5f5f5", fg="#888").pack(side="left", padx=(8, 0))
-        ttk.Button(task_hdr, text="删除", command=self._delete_selected).pack(side="right", padx=(4, 0))
-        ttk.Button(task_hdr, text="编辑", command=self._edit_selected).pack(side="right", padx=4)
+        self.delete_btn = ttk.Button(task_hdr, text="删除", command=self._delete_selected, state="disabled")
+        self.delete_btn.pack(side="right", padx=(4, 0))
+        self.edit_btn = ttk.Button(task_hdr, text="编辑", command=self._edit_selected, state="disabled")
+        self.edit_btn.pack(side="right", padx=4)
 
         # 执行控制按钮
         ctrl_frame = tk.Frame(left_frame, bg="#f5f5f5")
@@ -116,13 +126,12 @@ class MainWindow:
         list_frame.pack(fill="both", expand=True)
 
         cols = ("time", "alias", "media", "caption", "status")
-        self.tree = ttk.Treeview(list_frame, columns=cols, show="headings", height=8, selectmode="browse")
+        self.tree = ttk.Treeview(list_frame, columns=cols, show="headings", height=12, selectmode="browse")
         headers = {"time": ("时间", 55), "alias": ("账号", 80), "media": ("素材", 120),
                    "caption": ("文案", 260), "status": ("状态", 70)}
         for col, (label, width) in headers.items():
             self.tree.heading(col, text=label)
-            self.tree.column(col, width=width, anchor="w", stretch=False)
-        self.tree.column("caption", stretch=True)
+            self.tree.column(col, width=width, anchor="w", stretch=True)
         vsb = ttk.Scrollbar(list_frame, orient="vertical", command=self.tree.yview)
         self.tree.configure(yscrollcommand=vsb.set)
         self.tree.pack(side="left", fill="both", expand=True)
@@ -153,7 +162,7 @@ class MainWindow:
             fill="x", padx=16, pady=(8, 2))
         log_frame = tk.Frame(root, bg="#f5f5f5")
         log_frame.pack(fill="both", expand=True, padx=16, pady=(0, 12))
-        self.log_text = tk.Text(log_frame, height=6, font=("Courier", 9),
+        self.log_text = tk.Text(log_frame, height=8, font=("Courier", 9),
                                 state="disabled", bg="#1e1e1e", fg="#d4d4d4",
                                 relief="flat", wrap="word")
         log_vsb = ttk.Scrollbar(log_frame, orient="vertical", command=self.log_text.yview)
@@ -205,13 +214,16 @@ class MainWindow:
                                         bg="#f5f5f5", fg="#4a7c59")
         self.add_panel_title.pack(fill="x", padx=pad_x, pady=(12, 8))
 
-        # 素材文件夹
-        row_label("素材文件夹")
+        # 素材选择
+        row_label("素材")
         img_frame = tk.Frame(panel, bg="#f5f5f5")
         img_frame.pack(fill="x", padx=pad_x)
         self.img_label = tk.Label(img_frame, text="未选择", font=("", 9), fg="#888", bg="#f5f5f5")
         self.img_label.pack(side="left")
-        ttk.Button(img_frame, text="选择文件夹...", command=self._select_folder).pack(side="right")
+        btn_frame = tk.Frame(img_frame, bg="#f5f5f5")
+        btn_frame.pack(side="right")
+        ttk.Button(btn_frame, text="选文件夹...", command=self._select_folder).pack(side="left", padx=(0, 4))
+        ttk.Button(btn_frame, text="选文件...", command=self._select_files).pack(side="left")
 
         self.file_list_frame = tk.Frame(panel, bg="#f5f5f5")
         self.file_list_frame.pack(fill="x", padx=pad_x, pady=(4, 0))
@@ -270,7 +282,7 @@ class MainWindow:
         self._reset_add_panel()
         self.add_panel_title.config(text="添加任务")
         self._edit_idx = None
-        self.main_paned.add(self.add_panel, minsize=280)
+        self.main_paned.add(self.add_panel, minsize=480)
         self._refresh_account_checkboxes()
 
     def _hide_add_panel(self):
@@ -289,23 +301,82 @@ class MainWindow:
         self.start_var.set("09:00")
         self.end_var.set("12:00")
 
+    def _validate_files(self, files: list[str]) -> tuple[list[str], str | None]:
+        """验证文件列表，返回 (有效文件列表, 错误信息)"""
+        if not files:
+            return [], "未选择任何文件"
+
+        exts = {".jpg", ".jpeg", ".png", ".bmp", ".mp4", ".mov"}
+        valid_files = [f for f in files if os.path.splitext(f)[1].lower() in exts]
+        if not valid_files:
+            return [], "所选文件中没有图片或视频"
+
+        # 检查混发：图片和视频不能混发
+        has_img = any(os.path.splitext(f)[1].lower() in {".jpg", ".jpeg", ".png", ".bmp"} for f in valid_files)
+        has_vid = any(os.path.splitext(f)[1].lower() in {".mp4", ".mov"} for f in valid_files)
+        if has_img and has_vid:
+            return [], "图片和视频不能混发，请分开选择"
+
+        # 检查视频时长（微信限制30秒）
+        video_exts = {".mp4", ".mov"}
+        for f in valid_files:
+            if os.path.splitext(f)[1].lower() in video_exts:
+                try:
+                    import cv2
+                    cap = cv2.VideoCapture(f)
+                    fps = cap.get(cv2.CAP_PROP_FPS)
+                    frame_count = cap.get(cv2.CAP_PROP_FRAME_COUNT)
+                    duration = frame_count / fps if fps > 0 else 0
+                    cap.release()
+                    if duration > 30:
+                        return [], f"视频 {os.path.basename(f)} 时长 {int(duration)} 秒，超过微信30秒限制，请裁剪后重试"
+                except Exception:
+                    pass  # 无法读取时长时跳过检查
+
+        # 限制最多9个
+        if len(valid_files) > 9:
+            valid_files = valid_files[:9]
+
+        return valid_files, None
+
+    def _set_selected_files(self, files: list[str], source_name: str):
+        """设置选中的文件并更新界面"""
+        valid_files, error = self._validate_files(files)
+        if error:
+            messagebox.showwarning("提示", error)
+            return
+        self.selected_images = valid_files
+        self._folder = source_name
+        self.img_label.config(text=self._media_label(), fg="#333")
+        self._refresh_file_list()
+
     def _select_folder(self):
         from tkinter import filedialog
         folder = filedialog.askdirectory(title="选择素材文件夹（文件名 01-09 决定顺序）")
         if not folder:
             return
         exts = {".jpg", ".jpeg", ".png", ".bmp", ".mp4", ".mov"}
-        files = sorted(f for f in os.listdir(folder) if os.path.splitext(f)[1].lower() in exts)
+        files = sorted(
+            os.path.join(folder, f) for f in os.listdir(folder)
+            if os.path.splitext(f)[1].lower() in exts
+        )
+        self._set_selected_files(files, folder)
+
+    def _select_files(self):
+        from tkinter import filedialog
+        files = filedialog.askopenfilenames(
+            title="选择素材文件（可多选，按选择顺序排列）",
+            filetypes=[
+                ("图片和视频", "*.jpg *.jpeg *.png *.bmp *.mp4 *.mov"),
+                ("图片", "*.jpg *.jpeg *.png *.bmp"),
+                ("视频", "*.mp4 *.mov"),
+                ("所有文件", "*.*")
+            ]
+        )
         if not files:
-            messagebox.showwarning("提示", "该文件夹内没有图片或视频")
             return
-        if len(files) > 9:
-            messagebox.showwarning("提示", f"文件夹内有 {len(files)} 个文件，微信最多发9个，已自动取前9个")
-            files = files[:9]
-        self._folder = folder
-        self.selected_images = [os.path.join(folder, f) for f in files]
-        self.img_label.config(text=self._media_label(), fg="#333")
-        self._refresh_file_list()
+        # 保持用户选择的顺序
+        self._set_selected_files(list(files), "自选文件")
 
     def _media_label(self) -> str:
         imgs = sum(1 for f in self.selected_images
@@ -412,7 +483,7 @@ class MainWindow:
             return
         for win in self.windows:
             alias = win.get("alias") or "微信"
-            card = tk.Frame(self.acct_frame_inner, bg="#fff", relief="solid", bd=1, width=80, height=80)
+            card = tk.Frame(self.acct_frame_inner, bg="#fff", relief="solid", bd=1, width=100, height=100)
             card.pack_propagate(False)
             card.pack(side="left", padx=6, pady=4)
 
@@ -423,17 +494,17 @@ class MainWindow:
                     from PIL import Image, ImageTk
                     import io
                     img = Image.open(io.BytesIO(avatar_bytes))
-                    img = img.resize((48, 48), Image.LANCZOS)
+                    img = img.resize((60, 60), Image.LANCZOS)
                     photo = ImageTk.PhotoImage(img)
                     lbl = tk.Label(card, image=photo, bg="#fff")
                     lbl.image = photo  # 保持引用
-                    lbl.pack(pady=(4, 0))
+                    lbl.pack(pady=(6, 0))
                 except Exception:
-                    tk.Label(card, text="👤", font=("", 20), bg="#fff").pack(pady=(4, 0))
+                    tk.Label(card, text="👤", font=("", 24), bg="#fff").pack(pady=(6, 0))
             else:
-                tk.Label(card, text="👤", font=("", 20), bg="#fff").pack(pady=(4, 0))
+                tk.Label(card, text="👤", font=("", 24), bg="#fff").pack(pady=(6, 0))
 
-            tk.Label(card, text=alias, font=("", 8), bg="#fff").pack()
+            tk.Label(card, text=alias, font=("", 9), bg="#fff").pack(pady=(2, 0))
 
     @property
     def selected_aliases(self) -> list[str]:
@@ -493,6 +564,9 @@ class MainWindow:
         self.tree.delete(*self.tree.get_children())
         done = sum(1 for t in self.tasks if t.get("status") == "已发布")
         self.progress_var.set(f"{done} / {len(self.tasks)} 已发布")
+        has_tasks = len(self.tasks) > 0
+        self.edit_btn.config(state="normal" if has_tasks else "disabled")
+        self.delete_btn.config(state="normal" if has_tasks else "disabled")
         for task in self.tasks:
             time_str = task.get("scheduled_str", task.get("prefer_time", "自动"))
             images = task.get("images", [])
@@ -540,7 +614,7 @@ class MainWindow:
         for alias, var in self._alias_vars.items():
             var.set(alias == task.get("alias", ""))
 
-        self.main_paned.add(self.add_panel, minsize=280)
+        self.main_paned.add(self.add_panel, minsize=480)
 
     def _show_ctx_menu(self, event):
         item = self.tree.identify_row(event.y)

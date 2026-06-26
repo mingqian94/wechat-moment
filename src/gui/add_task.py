@@ -37,15 +37,18 @@ class AddTaskDialog:
             tk.Label(win, text=text, font=("", 10, "bold"), bg="#f5f5f5", anchor="w").pack(
                 fill="x", padx=pad_x, pady=(10, 2))
 
-        # 素材文件夹
-        row_label("素材文件夹（文件名 01-09 决定顺序）")
+        # 素材选择
+        row_label("素材（文件名 01-09 决定顺序）")
         img_frame = tk.Frame(win, bg="#f5f5f5")
         img_frame.pack(fill="x", padx=pad_x)
         init_label = self._media_label() if self.selected_images else "未选择"
         init_fg = "#333" if self.selected_images else "#888"
         self.img_label = tk.Label(img_frame, text=init_label, font=("", 9), fg=init_fg, bg="#f5f5f5")
         self.img_label.pack(side="left")
-        ttk.Button(img_frame, text="选择文件夹...", command=self._select_folder).pack(side="right")
+        btn_frame = tk.Frame(img_frame, bg="#f5f5f5")
+        btn_frame.pack(side="right")
+        ttk.Button(btn_frame, text="选文件夹...", command=self._select_folder).pack(side="left", padx=(0, 4))
+        ttk.Button(btn_frame, text="选文件...", command=self._select_files).pack(side="left")
 
         # 文件列表（最多显示9个）
         self.file_list_frame = tk.Frame(win, bg="#f5f5f5")
@@ -126,23 +129,80 @@ class AddTaskDialog:
             tk.Label(self.file_list_frame, text=f"{icon} {i+1}. {name}",
                      font=("", 9), fg="#555", bg="#f5f5f5", anchor="w").pack(fill="x")
 
+    def _validate_files(self, files: list[str]) -> tuple[list[str], str | None]:
+        """验证文件列表，返回 (有效文件列表, 错误信息)"""
+        if not files:
+            return [], "未选择任何文件"
+
+        exts = {".jpg", ".jpeg", ".png", ".bmp", ".mp4", ".mov"}
+        valid_files = [f for f in files if os.path.splitext(f)[1].lower() in exts]
+        if not valid_files:
+            return [], "所选文件中没有图片或视频"
+
+        # 检查混发：图片和视频不能混发
+        has_img = any(os.path.splitext(f)[1].lower() in {".jpg", ".jpeg", ".png", ".bmp"} for f in valid_files)
+        has_vid = any(os.path.splitext(f)[1].lower() in {".mp4", ".mov"} for f in valid_files)
+        if has_img and has_vid:
+            return [], "图片和视频不能混发，请分开选择"
+
+        # 检查视频时长（微信限制30秒）
+        video_exts = {".mp4", ".mov"}
+        for f in valid_files:
+            if os.path.splitext(f)[1].lower() in video_exts:
+                try:
+                    import cv2
+                    cap = cv2.VideoCapture(f)
+                    fps = cap.get(cv2.CAP_PROP_FPS)
+                    frame_count = cap.get(cv2.CAP_PROP_FRAME_COUNT)
+                    duration = frame_count / fps if fps > 0 else 0
+                    cap.release()
+                    if duration > 30:
+                        return [], f"视频 {os.path.basename(f)} 时长 {int(duration)} 秒，超过微信30秒限制，请裁剪后重试"
+                except Exception:
+                    pass  # 无法读取时长时跳过检查
+
+        # 限制最多9个
+        if len(valid_files) > 9:
+            valid_files = valid_files[:9]
+
+        return valid_files, None
+
+    def _set_selected_files(self, files: list[str], source_name: str):
+        """设置选中的文件并更新界面"""
+        valid_files, error = self._validate_files(files)
+        if error:
+            messagebox.showwarning("提示", error, parent=self.win)
+            return
+        self.selected_images = valid_files
+        self._folder = source_name
+        self.img_label.config(text=self._media_label(), fg="#333")
+        self._refresh_file_list()
+
     def _select_folder(self):
         folder = filedialog.askdirectory(title="选择素材文件夹（文件名 01-09 决定顺序）")
         if not folder:
             return
         exts = {".jpg", ".jpeg", ".png", ".bmp", ".mp4", ".mov"}
-        files = sorted(f for f in os.listdir(folder) if os.path.splitext(f)[1].lower() in exts)
+        files = sorted(
+            os.path.join(folder, f) for f in os.listdir(folder)
+            if os.path.splitext(f)[1].lower() in exts
+        )
+        self._set_selected_files(files, folder)
+
+    def _select_files(self):
+        files = filedialog.askopenfilenames(
+            title="选择素材文件（可多选，按选择顺序排列）",
+            filetypes=[
+                ("图片和视频", "*.jpg *.jpeg *.png *.bmp *.mp4 *.mov"),
+                ("图片", "*.jpg *.jpeg *.png *.bmp"),
+                ("视频", "*.mp4 *.mov"),
+                ("所有文件", "*.*")
+            ]
+        )
         if not files:
-            messagebox.showwarning("提示", "该文件夹内没有图片或视频", parent=self.win)
             return
-        if len(files) > 9:
-            messagebox.showwarning("提示", f"文件夹内有 {len(files)} 个文件，微信最多发9个，已自动取前9个",
-                                   parent=self.win)
-            files = files[:9]
-        self._folder = folder
-        self.selected_images = [os.path.join(folder, f) for f in files]
-        self.img_label.config(text=self._media_label(), fg="#333")
-        self._refresh_file_list()
+        # 保持用户选择的顺序
+        self._set_selected_files(list(files), "自选文件")
 
     def _parse_time(self, s: str) -> datetime | None:
         try:

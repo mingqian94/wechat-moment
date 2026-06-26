@@ -3,9 +3,29 @@
 入口：授权检查 → 主界面 → 调度执行
 """
 import sys
+import os
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
+
+
+def _setup_dpi():
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+        try:
+            ctypes.windll.shcore.SetProcessDpiAwareness(2)
+        except Exception:
+            try:
+                ctypes.windll.user32.SetProcessDPIAware()
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+
+_setup_dpi()
 
 import logger
 from auth import is_activated, get_version

@@ -1,4 +1,5 @@
 import platform
+import random
 import time
 from pathlib import Path
 
@@ -30,40 +31,83 @@ def reload_templates():
 
 
 def _grab_region(x: int, y: int, w: int, h: int, hwnd: int = None) -> np.ndarray:
-    """截取区域，支持通过 hwnd 直接截取窗口内容（无视遮挡）"""
+    """截取区域，支持通过 hwnd 直接截取窗口内容。
+    优先使用 PrintWindow(PW_RENDERFULLCONTENT)，能正确截取硬件加速/分层渲染的子区域
+    （如新版微信左侧导航栏）；桌面DC BitBlt 对这类区域会透出背后桌面像素，故仅作降级方案。
+    """
     if hwnd and IS_WINDOWS:
         try:
+            import ctypes
             import win32gui
             import win32ui
-            import win32con
             from ctypes import windll
+            import ctypes.wintypes as wintypes
 
-            # 获取窗口 DC
-            hwndDC = win32gui.GetWindowDC(hwnd)
-            mfcDC = win32ui.CreateDCFromHandle(hwndDC)
-            saveDC = mfcDC.CreateCompatibleDC()
+            # 方法1：PrintWindow（flag=2，PW_RENDERFULLCONTENT），正确处理硬件加速渲染区域
+            try:
+                rect = wintypes.RECT()
+                windll.user32.GetWindowRect(hwnd, ctypes.byref(rect))
+                win_x, win_y = rect.left, rect.top
+                win_w = rect.right - rect.left
+                win_h = rect.bottom - rect.top
 
-            saveBitMap = win32ui.CreateBitmap()
-            saveBitMap.CreateCompatibleBitmap(mfcDC, w, h)
-            saveDC.SelectObject(saveBitMap)
+                rel_x = x - win_x
+                rel_y = y - win_y
 
-            # 使用 PrintWindow 截取窗口内容
-            windll.user32.PrintWindow(hwnd, saveDC.GetSafeHdc(), 2)
+                hwndDC = win32gui.GetWindowDC(hwnd)
+                mfcDC = win32ui.CreateDCFromHandle(hwndDC)
+                saveDC = mfcDC.CreateCompatibleDC()
+                fullBitMap = win32ui.CreateBitmap()
+                fullBitMap.CreateCompatibleBitmap(mfcDC, win_w, win_h)
+                saveDC.SelectObject(fullBitMap)
+                windll.user32.PrintWindow(hwnd, saveDC.GetSafeHdc(), 2)
 
-            # 转换为 numpy
-            bmpinfo = saveBitMap.GetInfo()
-            bmpstr = saveBitMap.GetBitmapBits(True)
-            img = np.frombuffer(bmpstr, dtype=np.uint8)
-            img.shape = (h, w, 4)
-            img = cv2.cvtColor(img, cv2.COLOR_BGRA2BGR)
+                bmpstr = fullBitMap.GetBitmapBits(True)
+                img_full = np.frombuffer(bmpstr, dtype=np.uint8)
+                img_full.shape = (win_h, win_w, 4)
 
-            # 清理
-            win32gui.DeleteObject(saveBitMap.GetHandle())
-            saveDC.DeleteDC()
-            mfcDC.DeleteDC()
-            win32gui.ReleaseDC(hwnd, hwndDC)
+                # 裁剪目标区域
+                rel_x = max(0, min(rel_x, win_w - w))
+                rel_y = max(0, min(rel_y, win_h - h))
+                crop = img_full[rel_y:rel_y+h, rel_x:rel_x+w]
+                img = cv2.cvtColor(crop, cv2.COLOR_BGRA2BGR)
 
-            return img
+                win32gui.DeleteObject(fullBitMap.GetHandle())
+                saveDC.DeleteDC()
+                mfcDC.DeleteDC()
+                win32gui.ReleaseDC(hwnd, hwndDC)
+
+                if img.std() > 5:
+                    return img
+            except Exception as e:
+                print(f"[ImageRecog] PrintWindow失败: {e}")
+
+            # 方法2：桌面DC截图回退（部分硬件加速/分层区域可能透出背后桌面）
+            try:
+                desktop_hwnd = windll.user32.GetDesktopWindow()
+                desktopDC = win32gui.GetWindowDC(desktop_hwnd)
+                mfcDC = win32ui.CreateDCFromHandle(desktopDC)
+                saveDC = mfcDC.CreateCompatibleDC()
+                saveBitMap = win32ui.CreateBitmap()
+                saveBitMap.CreateCompatibleBitmap(mfcDC, w, h)
+                saveDC.SelectObject(saveBitMap)
+                saveDC.BitBlt((0, 0), (w, h), mfcDC, (x, y), 0x00CC0020)
+
+                bmpinfo = saveBitMap.GetInfo()
+                bmpstr = saveBitMap.GetBitmapBits(True)
+                img = np.frombuffer(bmpstr, dtype=np.uint8)
+                img.shape = (h, w, 4)
+                img = cv2.cvtColor(img, cv2.COLOR_BGRA2BGR)
+
+                win32gui.DeleteObject(saveBitMap.GetHandle())
+                saveDC.DeleteDC()
+                mfcDC.DeleteDC()
+                win32gui.ReleaseDC(desktop_hwnd, desktopDC)
+
+                return img
+            except Exception:
+                pass
+
         except Exception as e:
             print(f"[ImageRecog] 窗口截图失败，回退到屏幕截图: {e}")
 
@@ -124,6 +168,35 @@ def find_template(template_name: str, region: tuple[int, int, int, int] | None =
     return None
 
 
+def _human_move_click(x: int, y: int):
+    """模拟真人鼠标轨迹后点击，而不是瞬间跳到目标点的直线/瞬移。
+    途中插入 1-3 个带随机偏移的中间点，每段用 ease 曲线、随机时长移动，
+    到达目标前再做一次小幅微调，最后停顿一下再点击。
+    """
+    start_x, start_y = pyautogui.position()
+    dist = max(1.0, ((x - start_x) ** 2 + (y - start_y) ** 2) ** 0.5)
+
+    waypoint_count = random.choice([1, 1, 2, 3])
+    points = []
+    for i in range(1, waypoint_count + 1):
+        ratio = i / (waypoint_count + 1)
+        # 沿直线插值，再叠加随机横向偏移，偏移幅度跟距离挂钩，距离越远抖动空间越大
+        bx = start_x + (x - start_x) * ratio
+        by = start_y + (y - start_y) * ratio
+        jitter = min(60.0, dist * 0.18)
+        bx += random.uniform(-jitter, jitter)
+        by += random.uniform(-jitter, jitter)
+        points.append((bx, by))
+    points.append((x, y))
+
+    for px, py in points:
+        seg_duration = random.uniform(0.08, 0.27)
+        pyautogui.moveTo(px, py, duration=seg_duration, tween=pyautogui.easeInOutQuad)
+
+    time.sleep(random.uniform(0.06, 0.22))
+    pyautogui.click()
+
+
 def find_and_click(template_name: str, region: tuple[int, int, int, int] | None = None,
                    timeout: float = 5.0, hwnd: int = None) -> bool:
     """循环查找模板并点击，超时返回 False。hwnd 用于直接截取窗口内容。"""
@@ -132,12 +205,12 @@ def find_and_click(template_name: str, region: tuple[int, int, int, int] | None 
         pos = find_template(template_name, region, hwnd=hwnd)
         if pos:
             if IS_WINDOWS:
-                pyautogui.click(pos[0], pos[1])
+                _human_move_click(pos[0], pos[1])
             else:
                 print(f"[Mock] 点击 {template_name} at {pos}")
-            time.sleep(0.3)
+            time.sleep(random.uniform(0.22, 0.41))
             return True
-        time.sleep(0.3)
+        time.sleep(random.uniform(0.22, 0.41))
     return False
 
 

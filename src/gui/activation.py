@@ -8,8 +8,9 @@ class ActivationWindow:
         self.on_success = on_success
         self.root = tk.Tk()
         self.root.title("朋友圈发布助手 - 激活")
-        self.root.resizable(False, False)
-        self._center(430, 280)
+        self.root.resizable(True, True)
+        self.root.minsize(440, 300)
+        self._center(480, 320)
         try:
             from logo import get_tkimage
             self._logo = get_tkimage(128)
@@ -24,11 +25,35 @@ class ActivationWindow:
         self._build()
 
     def _center(self, w: int, h: int):
-        self.root.geometry(f"{w}x{h}")
-        self.root.update_idletasks()
-        x = (self.root.winfo_screenwidth() - w) // 2
-        y = (self.root.winfo_screenheight() - h) // 2
-        self.root.geometry(f"{w}x{h}+{x}+{y}")
+        screen_w = self.root.winfo_screenwidth()
+        screen_h = self.root.winfo_screenheight()
+
+        # 根据屏幕分辨率选择合适的窗口比例
+        if screen_w >= 2560:
+            w_ratio, h_ratio = 0.28, 0.32
+        elif screen_w >= 1920:
+            w_ratio, h_ratio = 0.32, 0.36
+        else:
+            w_ratio, h_ratio = 0.40, 0.42
+
+        w_new = int(screen_w * w_ratio)
+        h_new = int(screen_h * h_ratio)
+
+        # 最小尺寸
+        w_new = max(w_new, 460)
+        h_new = max(h_new, 320)
+
+        # 最大尺寸
+        w_new = min(w_new, 600)
+        h_new = min(h_new, 420)
+
+        # 确保不超出屏幕
+        w_new = min(w_new, screen_w - 60)
+        h_new = min(h_new, screen_h - 60)
+
+        x = (screen_w - w_new) // 2
+        y = (screen_h - h_new) // 2
+        self.root.geometry(f"{w_new}x{h_new}+{x}+{y}")
 
     def _build(self):
         root = self.root
@@ -42,7 +67,7 @@ class ActivationWindow:
 
         tk.Label(root, text="注册码", font=("", 10, "bold"), bg="#f5f5f5", anchor="w").pack(fill="x", **pad)
         self.code_var = tk.StringVar()
-        entry = ttk.Entry(root, textvariable=self.code_var, font=("Courier", 11), width=38)
+        entry = ttk.Entry(root, textvariable=self.code_var, font=("Courier", 11))
         entry.pack(padx=24, pady=4, fill="x")
         entry.bind("<Return>", lambda _: self._activate())
 

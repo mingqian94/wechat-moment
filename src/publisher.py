@@ -1,22 +1,23 @@
+import os
 import platform
+import random
 import time
 from datetime import datetime
 from pathlib import Path
 
 import pyautogui
+import pyperclip
 
-from window_manager import activate_window, get_window_rect
+from window_manager import activate_window, get_window_rect, find_moments_window
 from image_recognition import find_and_click, take_screenshot
 
 IS_WINDOWS = platform.system() == "Windows"
 
 SCREENSHOT_DIR = Path(__file__).parent.parent / "错误截图"
 
-# 各步骤操作延迟（秒）
-OP_DELAY_MIN = 1.0
-OP_DELAY_MAX = 3.0
-
-import random
+# 各步骤操作延迟（秒），故意用非整数的范围，避免每次间隔都差不多长被识别成机器节奏
+OP_DELAY_MIN = 0.85
+OP_DELAY_MAX = 2.95
 
 
 def _sleep():
@@ -30,6 +31,27 @@ def _error_shot(hwnd: int, step: str):
     take_screenshot(rect, path)
 
 
+VIDEO_EXTS = {".mp4", ".mov"}
+IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".bmp"}
+
+
+def _is_video(path: str) -> bool:
+    return os.path.splitext(path)[1].lower() in VIDEO_EXTS
+
+
+def _is_image(path: str) -> bool:
+    return os.path.splitext(path)[1].lower() in IMAGE_EXTS
+
+
+def _get_media_type(paths: list[str]) -> str:
+    """判断素材类型：image / video / mixed"""
+    has_img = any(_is_image(p) for p in paths)
+    has_vid = any(_is_video(p) for p in paths)
+    if has_vid and has_img:
+        return "mixed"
+    return "video" if has_vid else "image"
+
+
 def execute_publish(task: dict) -> dict:
     """
     执行单条发布任务。
@@ -41,10 +63,15 @@ def execute_publish(task: dict) -> dict:
     images: list[str] = task.get("images", [])
     caption: str = task.get("caption", "")
 
+    # 判断素材类型
+    media_type = _get_media_type(images)
+    if media_type == "mixed":
+        return {"success": False, "reason": "图片和视频不能混发，请分开创建任务"}
+
     # Mock 模式（Mac 开发）
     if not IS_WINDOWS:
-        print(f"[Mock] 发布任务: {alias} | 图片数: {len(images)} | 文案: {caption[:20]}")
-        time.sleep(1.5)
+        print(f"[Mock] 发布任务: {alias} | 类型: {media_type} | 文件数: {len(images)} | 文案: {caption[:20]}")
+        time.sleep(random.uniform(1.15, 1.85))
         return {"success": True, "reason": ""}
 
     # ── Step 1: 激活窗口 ──────────────────────────────────
@@ -60,23 +87,45 @@ def execute_publish(task: dict) -> dict:
         return {"success": False, "reason": "找不到朋友圈按钮"}
     _sleep()
 
+    # 点击朋友圈后会弹出一个独立的新顶层窗口（不是主窗口的子区域），
+    # 相机/发表按钮都在这个新窗口里，后续步骤必须切到这个 hwnd，否则永远找不到按钮
+    moments_hwnd = find_moments_window(hwnd)
+    if not moments_hwnd:
+        _error_shot(hwnd, "moments_window")
+        return {"success": False, "reason": "找不到朋友圈弹出窗口"}
+    if not activate_window(moments_hwnd):
+        return {"success": False, "reason": "朋友圈窗口激活失败"}
+    moments_rect = get_window_rect(moments_hwnd)
+
     # ── Step 3: 点击相机图标 ──────────────────────────────
-    if not find_and_click("camera_btn.png", rect, timeout=6, hwnd=hwnd):
-        _error_shot(hwnd, "camera_btn")
+    if not find_and_click("camera_btn.png", moments_rect, timeout=6, hwnd=moments_hwnd):
+        _error_shot(moments_hwnd, "camera_btn")
         return {"success": False, "reason": "找不到相机图标"}
     _sleep()
 
     # ── Step 4: 文件选择对话框 ────────────────────────────
     # 新版微信直接弹出文件管理器，没有"从相册选择"中间步骤
     # 老版微信需要先点"album_btn.png"，如果找不到则跳过
-    album_clicked = find_and_click("album_btn.png", rect, timeout=2, hwnd=hwnd)
+    album_clicked = find_and_click("album_btn.png", moments_rect, timeout=2, hwnd=moments_hwnd)
     if album_clicked:
         _sleep()
 
-    if not _select_images_dialog(images):
-        _error_shot(hwnd, "file_dialog")
-        return {"success": False, "reason": "图片选择失败"}
-    time.sleep(2.5)  # 等待图片加载
+    if media_type == "video":
+        if not _select_video_dialog(images):
+            _error_shot(moments_hwnd, "file_dialog")
+            return {"success": False, "reason": "视频选择失败"}
+        # 视频需要本地转码+上传准备，按文件大小估算等待时间，避免转码未完成就点发表导致"视频未发送"
+        size_mb = os.path.getsize(images[0]) / (1024 * 1024) if os.path.exists(images[0]) else 0
+        base_wait = max(8.0, min(30.0, size_mb * 1.5))
+        time.sleep(base_wait + random.uniform(-0.6, 0.9))
+    else:
+        if not _select_images_dialog(images):
+            _error_shot(moments_hwnd, "file_dialog")
+            return {"success": False, "reason": "图片选择失败"}
+        # 等图片上传准备完成再点发表，否则会出现"照片未发送"——点击没点错，是点早了。
+        # 按张数给足时间，张数越多本地处理越久，单张给 5 秒兜底。
+        base_wait = max(5.0, 1.5 * len(images))
+        time.sleep(base_wait + random.uniform(-0.4, 0.7))
 
     # ── Step 6: 粘贴文案 ─────────────────────────────────
     if not _paste_caption(caption):
@@ -84,11 +133,12 @@ def execute_publish(task: dict) -> dict:
     _sleep()
 
     # ── Step 7: 点击发表 ──────────────────────────────────
-    if not find_and_click("post_btn.png", rect, timeout=10, hwnd=hwnd):
-        _error_shot(hwnd, "post_btn")
+    moments_rect = get_window_rect(moments_hwnd)
+    if not find_and_click("post_btn.png", moments_rect, timeout=10, hwnd=moments_hwnd):
+        _error_shot(moments_hwnd, "post_btn")
         return {"success": False, "reason": "找不到发表按钮（可能发表按钮为灰色）"}
 
-    time.sleep(2.0)  # 等待发表完成
+    time.sleep(random.uniform(1.7, 2.6))  # 等待发表完成
     return {"success": True, "reason": ""}
 
 
@@ -105,7 +155,7 @@ def _select_images_dialog(image_paths: list[str]) -> bool:
         dialog_hwnd = ctypes.windll.user32.FindWindowW("#32770", None)
         if dialog_hwnd:
             break
-        time.sleep(0.3)
+        time.sleep(random.uniform(0.24, 0.37))
 
     if not dialog_hwnd:
         return False
@@ -124,9 +174,61 @@ def _select_images_dialog(image_paths: list[str]) -> bool:
 
     WM_SETTEXT = 0x000C
     ctypes.windll.user32.SendMessageW(edit, WM_SETTEXT, 0, path_str)
-    time.sleep(0.2)
+    # 模拟真人选完文件后看一眼再确认，不要填完立刻回车
+    time.sleep(random.uniform(2.1, 4.8))
     ctypes.windll.user32.SetForegroundWindow(dialog_hwnd)
-    time.sleep(0.1)
+    time.sleep(random.uniform(0.08, 0.18))
+    pyautogui.press("enter")
+    return True
+
+
+def _select_video_dialog(video_paths: list[str]) -> bool:
+    """
+    等待微信弹出的文件选择对话框，选择视频文件。
+    微信视频选择逻辑与图片类似，但一次只能选一个视频。
+    仅 Windows 有效。
+    """
+    if not IS_WINDOWS:
+        return True
+    import ctypes
+
+    # 微信限制一次只能发一个视频
+    if len(video_paths) > 1:
+        print(f"[Publisher] 警告：微信一次只能发一个视频，已取第一个: {video_paths[0]}")
+    video_path = video_paths[0]
+
+    # 用 class 名匹配比标题更可靠，#32770 是 Windows 标准文件对话框
+    deadline = time.time() + 8
+    dialog_hwnd = 0
+    while time.time() < deadline:
+        dialog_hwnd = ctypes.windll.user32.FindWindowW("#32770", None)
+        if dialog_hwnd:
+            break
+        time.sleep(random.uniform(0.24, 0.37))
+
+    if not dialog_hwnd:
+        return False
+
+    # 尝试切换到"视频"视图（部分微信版本需要）
+    # 先尝试发送 Ctrl+2 切换到视频标签（如果文件管理器支持）
+    ctypes.windll.user32.SetForegroundWindow(dialog_hwnd)
+    time.sleep(random.uniform(0.15, 0.28))
+
+    # 文件名输入框层级：ComboBoxEx32 > ComboBox > Edit，找不到则直接找 Edit
+    combo_ex = ctypes.windll.user32.FindWindowExW(dialog_hwnd, None, "ComboBoxEx32", None)
+    combo = ctypes.windll.user32.FindWindowExW(combo_ex, None, "ComboBox", None) if combo_ex else 0
+    edit = ctypes.windll.user32.FindWindowExW(combo, None, "Edit", None) if combo else 0
+    if not edit:
+        edit = ctypes.windll.user32.FindWindowExW(dialog_hwnd, None, "Edit", None)
+    if not edit:
+        return False
+
+    WM_SETTEXT = 0x000C
+    ctypes.windll.user32.SendMessageW(edit, WM_SETTEXT, 0, video_path)
+    # 模拟真人选完文件后看一眼再确认，不要填完立刻回车
+    time.sleep(random.uniform(2.1, 4.8))
+    ctypes.windll.user32.SetForegroundWindow(dialog_hwnd)
+    time.sleep(random.uniform(0.08, 0.18))
     pyautogui.press("enter")
     return True
 
@@ -135,7 +237,7 @@ def _paste_caption(caption: str) -> bool:
     """用剪贴板粘贴文案，避免中文输入法问题。"""
     try:
         pyperclip.copy(caption)
-        time.sleep(0.2)
+        time.sleep(random.uniform(0.16, 0.34))
         pyautogui.hotkey("ctrl", "v")
         return True
     except Exception as e:
