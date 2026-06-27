@@ -295,6 +295,10 @@ if IS_WINDOWS:
         # 如果最小化则恢复
         if user32.IsIconic(hwnd):
             user32.ShowWindow(hwnd, 9)  # SW_RESTORE
+        # 微信失去焦点后会把自己设成不可见（不是最小化，IsIconic 是 False，
+        # 但 IsWindowVisible 是 0），上面那个 IsIconic 判断盖不住这种情况，要单独处理
+        if not user32.IsWindowVisible(hwnd):
+            user32.ShowWindow(hwnd, 5)  # SW_SHOW
 
         kernel32 = windll.kernel32
         cur_thread = kernel32.GetCurrentThreadId()

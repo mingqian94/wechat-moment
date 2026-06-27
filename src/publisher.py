@@ -9,7 +9,7 @@ import pyautogui
 import pyperclip
 
 from window_manager import activate_window, get_window_rect, find_moments_window, close_window
-from image_recognition import find_and_click, take_screenshot
+from image_recognition import find_and_click, find_template, take_screenshot
 
 IS_WINDOWS = platform.system() == "Windows"
 
@@ -29,6 +29,23 @@ def _error_shot(hwnd: int, step: str):
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     path = str(SCREENSHOT_DIR / f"error_{ts}_{step}.png")
     take_screenshot(rect, path)
+
+
+def _wait_for_send_failure(hwnd: int, timeout: float) -> bool:
+    """点完发表后轮询检测"未发送"提示是否出现（图片/视频上传到这步才真正完成或失败，
+    点完发表按钮那一刻只代表点击成功，不代表真的发出去了）。
+    用"照片未发送"/"视频未发送"两种文案共有的"未发送"三个字做模板匹配——这三个字是纯文字
+    渲染不会变，但图标本身会变色/动画，不能用图标做模板（踩过的坑）。
+    timeout 内出现就是失败，返回 True；一直没出现，在没有更可靠的"成功"信号的情况下，
+    只能视为成功，返回 False。
+    """
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        rect = get_window_rect(hwnd)
+        if find_template("send_failed_text.png", rect, hwnd=hwnd):
+            return True
+        time.sleep(random.uniform(0.7, 1.3))
+    return False
 
 
 VIDEO_EXTS = {".mp4", ".mov"}
@@ -138,7 +155,14 @@ def execute_publish(task: dict) -> dict:
         _error_shot(moments_hwnd, "post_btn")
         return {"success": False, "reason": "找不到发表按钮（可能发表按钮为灰色）"}
 
-    time.sleep(random.uniform(1.7, 2.6))  # 等待发表完成
+    time.sleep(random.uniform(1.7, 2.6))  # 先等一下，让"未发送"有机会出现
+
+    # 点发表只代表点击成功，不代表真的发出去了——图片/视频上传完成（或失败）还要等一会儿。
+    # 等够时间、确认没出现"未发送"才算成功；图片给的等待时间短，视频给的长，因为视频处理更慢。
+    check_timeout = 12.0 if media_type == "video" else 8.0
+    if _wait_for_send_failure(moments_hwnd, check_timeout):
+        _error_shot(moments_hwnd, "send_failed")
+        return {"success": False, "reason": "发送失败（未发送，可能是账号风控或网络问题）"}
 
     # 发布成功后把朋友圈弹窗关掉，避免残留挡住下一个账号的操作
     close_window(moments_hwnd)
