@@ -8,7 +8,7 @@ from pathlib import Path
 import pyautogui
 import pyperclip
 
-from window_manager import activate_window, get_window_rect, find_moments_window
+from window_manager import activate_window, get_window_rect, find_moments_window, close_window
 from image_recognition import find_and_click, take_screenshot
 
 IS_WINDOWS = platform.system() == "Windows"
@@ -139,6 +139,10 @@ def execute_publish(task: dict) -> dict:
         return {"success": False, "reason": "找不到发表按钮（可能发表按钮为灰色）"}
 
     time.sleep(random.uniform(1.7, 2.6))  # 等待发表完成
+
+    # 发布成功后把朋友圈弹窗关掉，避免残留挡住下一个账号的操作
+    close_window(moments_hwnd)
+
     return {"success": True, "reason": ""}
 
 

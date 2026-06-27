@@ -1,6 +1,11 @@
-"""生成测试素材：3张图片 + 1个短视频"""
+"""生成测试素材：3张图片 + 1个短视频。
+
+视频部分需要 `pip install imageio imageio-ffmpeg`（仅本脚本用，不是项目运行依赖）。
+之前用 OpenCV 默认的 mp4v 编码出来是老式 MPEG-4 Part2（FMP4），不是真手机视频会用的 H.264，
+微信的上传/转码管线可能根本不认；这里用 imageio-ffmpeg 自带的 ffmpeg 二进制编码成真正的 H.264，
+跟真实视频更接近。
+"""
 from PIL import Image, ImageDraw, ImageFont
-import cv2
 import numpy as np
 import os
 
@@ -46,37 +51,40 @@ for i in range(3):
     img.save(f"test_images/0{i+1}.jpg", quality=90)
     print(f"已生成: test_images/0{i+1}.jpg")
 
-# 生成1个5秒的测试视频（1080x1080）
+# 生成1个5秒的测试视频（1080x1080，真实 H.264 编码）
+import imageio_ffmpeg as iio
+
 video_path = "test_video/test_clip.mp4"
-fourcc = cv2.VideoWriter_fourcc(*'mp4v')
 fps = 30
 duration = 5
 vw, vh = 1080, 1080
-out = cv2.VideoWriter(video_path, fourcc, fps, (vw, vh))
+
+writer = iio.write_frames(
+    video_path, (vw, vh), fps=fps, codec='libx264',
+    output_params=['-pix_fmt', 'yuv420p'],
+)
+writer.send(None)
 
 for frame_idx in range(fps * duration):
     img = np.zeros((vh, vw, 3), dtype=np.uint8)
     t = frame_idx / (fps * duration)
 
-    # 渐变背景
-    for y in range(vh):
+    # 渐变背景（按行跨步填色，避免逐行 Python 循环太慢）
+    for y in range(0, vh, 4):
         ratio = y / vh
         r = int(255 * (1 - ratio) + 100 * ratio)
         g = int(150 * (1 - ratio) + 180 * ratio)
         b = int(100 * (1 - ratio) + 255 * ratio)
-        img[y, :] = [b, g, r]
+        img[y:y + 4, :] = [r, g, b]
 
     # 移动的圆形
     cx = int(vw / 2 + 200 * np.sin(t * 2 * np.pi))
     cy = int(vh / 2 + 100 * np.cos(t * 2 * np.pi))
-    cv2.circle(img, (cx, cy), 100, (255, 255, 255), -1)
+    yy, xx = np.ogrid[:vh, :vw]
+    mask = (xx - cx) ** 2 + (yy - cy) ** 2 <= 100 ** 2
+    img[mask] = [255, 255, 255]
 
-    # 文字
-    text = f"测试视频 {int(t*5)+1}s"
-    cv2.putText(img, text, (vw//2 - 200, vh//2 + 180),
-                cv2.FONT_HERSHEY_SIMPLEX, 2, (255, 255, 255), 3)
+    writer.send(img)
 
-    out.write(img)
-
-out.release()
-print(f"已生成: {video_path} (5秒, 1080x1080, 30fps)")
+writer.close()
+print(f"已生成: {video_path} (5秒, ~1080x1080, 30fps, H.264)")

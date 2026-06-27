@@ -368,6 +368,19 @@ if IS_WINDOWS:
             time.sleep(random.uniform(0.16, 0.27))
         return None
 
+    def close_window(hwnd: int) -> bool:
+        """关闭窗口（发 WM_CLOSE），用于发布完成后把朋友圈弹窗收掉，
+        避免残留弹窗挡住下一个账号的操作。失败（比如窗口已经不存在）不抛异常，返回 False。
+        """
+        try:
+            if not user32.IsWindow(hwnd):
+                return True
+            WM_CLOSE = 0x0010
+            user32.PostMessageW(hwnd, WM_CLOSE, 0, 0)
+            return True
+        except Exception:
+            return False
+
 else:
     # Mac / 开发模式：返回 mock 数据，不做实际操作
     _MOCK_WINDOWS = [
@@ -388,6 +401,10 @@ else:
 
     def find_moments_window(main_hwnd: int, timeout: float = 5.0) -> int | None:
         return main_hwnd
+
+    def close_window(hwnd: int) -> bool:
+        print(f"[Mock] close_window hwnd={hwnd}")
+        return True
 
 
 def bind_aliases(windows: list[dict]) -> list[dict]:
