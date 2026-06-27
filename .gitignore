@@ -19,3 +19,6 @@ activation.dat
 
 # 本地工具配置（非项目内容）
 .claude/
+
+# 从网上下载的真实测试图（第三方版权图片，不是项目自己生成的素材，不提交）
+test_images_real/
