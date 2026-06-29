@@ -149,7 +149,14 @@ class Scheduler:
 
             self._log(f"开始发布: {task['alias']} - {task.get('caption', '')[:20]}")
 
-            result = self.publish_fn(task)
+            try:
+                result = self.publish_fn(task)
+            except Exception as e:
+                # publish_fn 内部本应把所有失败都包装成 {"success": False, ...} 返回，
+                # 不该抛异常；这里兜底是为了不让调度线程的未捕获异常静默吞掉整条任务
+                # （线程里抛异常不会让主程序崩，但会让这条任务卡在"发布中"状态不再更新）
+                self._log(f"✗ 发布出现未捕获异常 [{task['alias']}]: {e}")
+                result = {"success": False, "reason": f"未捕获异常: {e}"}
             self._publishing = False
 
             if result.get("success"):

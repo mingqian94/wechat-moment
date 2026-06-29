@@ -125,6 +125,10 @@ class MainWindow:
         list_frame = tk.Frame(left_frame, bg="#f5f5f5")
         list_frame.pack(fill="both", expand=True)
 
+        style = ttk.Style()
+        style.configure("Treeview", rowheight=32, font=("", 10))
+        style.configure("Treeview.Heading", font=("", 10, "bold"))
+
         cols = ("time", "alias", "media", "caption", "status")
         self.tree = ttk.Treeview(list_frame, columns=cols, show="headings", height=12, selectmode="browse")
         headers = {"time": ("时间", 55), "alias": ("账号", 80), "media": ("素材", 120),
@@ -270,9 +274,14 @@ class MainWindow:
             tk.Checkbutton(self.acct_select_frame, text=alias, variable=var,
                            bg="#f5f5f5", font=("", 10)).pack(side="left", padx=(0, 8))
 
+    def _is_add_panel_shown(self) -> bool:
+        # panes() 返回的是 Tcl_Obj，不是 str，不能直接用 widget in panes() 比较，
+        # 必须转成字符串再比较路径名，否则永远是 False（试过，踩过的坑）
+        return any(str(p) == str(self.add_panel) for p in self.main_paned.panes())
+
     def _toggle_add_panel(self):
         """切换添加任务面板的显示/隐藏"""
-        if self.add_panel in self.main_paned.panes():
+        if self._is_add_panel_shown():
             self._hide_add_panel()
         else:
             self._show_add_panel()
@@ -287,7 +296,7 @@ class MainWindow:
 
     def _hide_add_panel(self):
         """隐藏添加任务面板"""
-        if self.add_panel in self.main_paned.panes():
+        if self._is_add_panel_shown():
             self.main_paned.remove(self.add_panel)
 
     def _reset_add_panel(self):
@@ -304,13 +313,13 @@ class MainWindow:
 
     def _default_time_range(self) -> tuple[str, str]:
         """默认发布时段：起始取当前时间往上取整到 5 分钟（比如 12:22 取 12:25），
-        结束为起始 + 3 小时，跟原来固定的 09:00-12:00 时长一致，超过当天就封顶到 23:55。
+        结束为起始 + 30 分钟，超过当天就封顶到 23:55。
         """
         from datetime import datetime, timedelta
         now = datetime.now().replace(second=0, microsecond=0)
         add_minutes = (5 - now.minute % 5) % 5
         start_dt = now + timedelta(minutes=add_minutes)
-        end_dt = start_dt + timedelta(hours=3)
+        end_dt = start_dt + timedelta(minutes=30)
         day_end = start_dt.replace(hour=23, minute=55)
         if end_dt > day_end:
             end_dt = day_end
