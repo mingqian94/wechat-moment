@@ -28,45 +28,6 @@ if IS_WINDOWS:
     # 支持的微信窗口类名（传统版 + 新版/UWP版）
     WECHAT_CLASS_NAMES = ["WeChatMainWndForPC", "Qt51514QWindowIcon"]
 
-    def _capture_window_screenshot(hwnd: int, width: int = 200, height: int = 200) -> bytes | None:
-        """截取窗口左上角区域（头像位置），返回 PNG 字节"""
-        try:
-            import win32gui
-            import win32ui
-            from ctypes import windll
-
-            hwndDC = win32gui.GetWindowDC(hwnd)
-            mfcDC = win32ui.CreateDCFromHandle(hwndDC)
-            saveDC = mfcDC.CreateCompatibleDC()
-
-            saveBitMap = win32ui.CreateBitmap()
-            saveBitMap.CreateCompatibleBitmap(mfcDC, width, height)
-            saveDC.SelectObject(saveBitMap)
-
-            windll.user32.PrintWindow(hwnd, saveDC.GetSafeHdc(), 2)
-
-            bmpinfo = saveBitMap.GetInfo()
-            bmpstr = saveBitMap.GetBitmapBits(True)
-
-            import numpy as np
-            from PIL import Image
-            img = np.frombuffer(bmpstr, dtype=np.uint8)
-            img.shape = (height, width, 4)
-            img = Image.fromarray(img[:, :, :3], 'RGB')
-
-            import io
-            buf = io.BytesIO()
-            img.save(buf, format='PNG')
-
-            win32gui.DeleteObject(saveBitMap.GetHandle())
-            saveDC.DeleteDC()
-            mfcDC.DeleteDC()
-            win32gui.ReleaseDC(hwnd, hwndDC)
-
-            return buf.getvalue()
-        except Exception:
-            return None
-
     def _capture_window(hwnd: int):
         """截取窗口图像，返回 PIL Image。
         优先使用 PrintWindow(PW_RENDERFULLCONTENT)，能正确截取硬件加速/分层渲染的子区域
@@ -101,7 +62,8 @@ if IS_WINDOWS:
                 bmpstr = bmp.GetBitmapBits(True)
                 img = np.frombuffer(bmpstr, dtype=np.uint8)
                 img = np.reshape(img, (h, w, 4))
-                pil = Image.fromarray(img[:, :, :3], 'RGB')
+                # GetBitmapBits 返回 BGRA，通道要反过来才是 RGB，否则颜色全错（比如肤色会偏蓝）
+                pil = Image.fromarray(img[:, :, [2, 1, 0]], 'RGB')
 
                 win32gui.DeleteObject(bmp.GetHandle())
                 saveDC.DeleteDC()
@@ -128,8 +90,10 @@ if IS_WINDOWS:
                 bmpstr = bmp.GetBitmapBits(True)
                 img = np.frombuffer(bmpstr, dtype=np.uint8)
                 img = np.reshape(img, (h, w, 4))
-                # GetBitmapBits 返回 BGRA，需转成 RGB
-                pil = Image.fromarray(img, 'RGBA').convert('RGB')
+                # GetBitmapBits 返回 BGRA，通道要反过来才是 RGB
+                # （之前这里写的是 Image.fromarray(img, 'RGBA').convert('RGB')，
+                # 那只是给 PIL 贴了个 'RGBA' 标签，并没有真的把字节顺序倒过来，颜色全错）
+                pil = Image.fromarray(img[:, :, [2, 1, 0]], 'RGB')
 
                 win32gui.DeleteObject(bmp.GetHandle())
                 saveDC.DeleteDC()

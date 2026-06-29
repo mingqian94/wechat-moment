@@ -298,8 +298,23 @@ class MainWindow:
         for w in self.file_list_frame.winfo_children():
             w.destroy()
         self.caption_text.delete("1.0", "end")
-        self.start_var.set("09:00")
-        self.end_var.set("12:00")
+        start_str, end_str = self._default_time_range()
+        self.start_var.set(start_str)
+        self.end_var.set(end_str)
+
+    def _default_time_range(self) -> tuple[str, str]:
+        """默认发布时段：起始取当前时间往上取整到 5 分钟（比如 12:22 取 12:25），
+        结束为起始 + 3 小时，跟原来固定的 09:00-12:00 时长一致，超过当天就封顶到 23:55。
+        """
+        from datetime import datetime, timedelta
+        now = datetime.now().replace(second=0, microsecond=0)
+        add_minutes = (5 - now.minute % 5) % 5
+        start_dt = now + timedelta(minutes=add_minutes)
+        end_dt = start_dt + timedelta(hours=3)
+        day_end = start_dt.replace(hour=23, minute=55)
+        if end_dt > day_end:
+            end_dt = day_end
+        return start_dt.strftime("%H:%M"), end_dt.strftime("%H:%M")
 
     def _validate_files(self, files: list[str]) -> tuple[list[str], str | None]:
         """验证文件列表，返回 (有效文件列表, 错误信息)"""
