@@ -291,7 +291,7 @@ class MainWindow:
         self._reset_add_panel()
         self.add_panel_title.config(text="添加任务")
         self._edit_idx = None
-        self.main_paned.add(self.add_panel, minsize=340)
+        self.main_paned.add(self.add_panel, minsize=120)
         self._refresh_account_checkboxes()
 
     def _hide_add_panel(self):
@@ -376,7 +376,8 @@ class MainWindow:
 
     def _select_folder(self):
         from tkinter import filedialog
-        folder = filedialog.askdirectory(title="选择素材文件夹（文件名 01-09 决定顺序）")
+        self.root.update()
+        folder = filedialog.askdirectory(parent=self.root, title="选择素材文件夹（文件名 01-09 决定顺序）")
         if not folder:
             return
         exts = {".jpg", ".jpeg", ".png", ".bmp", ".mp4", ".mov"}
@@ -388,7 +389,9 @@ class MainWindow:
 
     def _select_files(self):
         from tkinter import filedialog
+        self.root.update()
         files = filedialog.askopenfilenames(
+            parent=self.root,
             title="选择素材文件（可多选，按选择顺序排列）",
             filetypes=[
                 ("图片和视频", "*.jpg *.jpeg *.png *.bmp *.mp4 *.mov"),
@@ -635,7 +638,7 @@ class MainWindow:
         for alias, var in self._alias_vars.items():
             var.set(alias == task.get("alias", ""))
 
-        self.main_paned.add(self.add_panel, minsize=340)
+        self.main_paned.add(self.add_panel, minsize=120)
 
     def _show_ctx_menu(self, event):
         item = self.tree.identify_row(event.y)
