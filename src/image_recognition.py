@@ -10,7 +10,9 @@ from PIL import ImageGrab
 
 IS_WINDOWS = platform.system() == "Windows"
 
-TEMPLATES_DIR = Path(__file__).parent.parent / "templates"
+import sys as _sys
+_BASE = Path(_sys._MEIPASS) if getattr(_sys, "frozen", False) else Path(__file__).parent.parent
+TEMPLATES_DIR = _BASE / "templates"
 MATCH_THRESHOLD = 0.80   # OpenCV 相似度阈值（0-1）
 SCALES = [1.0, 0.9, 0.85, 0.8, 1.1, 1.15, 1.25, 1.5]  # 多尺度容错，含 125%/150% 系统缩放
 

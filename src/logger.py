@@ -2,7 +2,8 @@ import sys
 from datetime import datetime, timedelta
 from pathlib import Path
 
-LOG_DIR = Path(__file__).parent.parent / "logs"
+_APP_DIR = Path(sys.executable).parent if getattr(sys, "frozen", False) else Path(__file__).parent.parent
+LOG_DIR = _APP_DIR / "logs"
 KEEP_DAYS = 30
 
 

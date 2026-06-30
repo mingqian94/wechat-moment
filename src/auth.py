@@ -10,7 +10,9 @@ try:
 except ImportError:
     pass
 
-ACTIVATION_FILE = Path(__file__).parent.parent / "activation.dat"
+import sys as _sys
+_APP_DIR = Path(_sys.executable).parent if getattr(_sys, "frozen", False) else Path(__file__).parent.parent
+ACTIVATION_FILE = _APP_DIR / "activation.dat"
 # 开发时通过 .env 设置 WM_PRIVATE_KEY=xxx；发布时编译进 exe 前替换
 _PRIVATE_KEY = os.environ.get("WM_PRIVATE_KEY", "WM_DEFAULT_KEY_2026")
 
