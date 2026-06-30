@@ -195,8 +195,10 @@ def _select_images_dialog(image_paths: list[str]) -> bool:
     if not dialog_hwnd:
         return False
 
+    # 路径统一转反斜杠（tkinter askopenfilenames 返回正斜杠，Windows 文件对话框会报"文件名无效"）
+    norm = [p.replace("/", "\\") for p in image_paths]
     # 多图用双引号空格分隔，单图直接路径
-    path_str = " ".join(f'"{p}"' for p in image_paths) if len(image_paths) > 1 else image_paths[0]
+    path_str = " ".join(f'"{p}"' for p in norm) if len(norm) > 1 else norm[0]
 
     # 文件名输入框层级：ComboBoxEx32 > ComboBox > Edit，找不到则直接找 Edit
     combo_ex = ctypes.windll.user32.FindWindowExW(dialog_hwnd, None, "ComboBoxEx32", None)
@@ -259,7 +261,7 @@ def _select_video_dialog(video_paths: list[str]) -> bool:
         return False
 
     WM_SETTEXT = 0x000C
-    ctypes.windll.user32.SendMessageW(edit, WM_SETTEXT, 0, video_path)
+    ctypes.windll.user32.SendMessageW(edit, WM_SETTEXT, 0, video_path.replace("/", "\\"))
     # 模拟真人选完文件后看一眼再确认，不要填完立刻回车
     time.sleep(random.uniform(2.1, 4.8))
     ctypes.windll.user32.SetForegroundWindow(dialog_hwnd)

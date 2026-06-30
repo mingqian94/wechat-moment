@@ -459,3 +459,17 @@ style.configure("Treeview.Heading", font=("", 10, "bold"))
 - `image_recognition.py`：`SCALES` 列表从 `[1.0, 0.9, 0.85, 0.8, 1.1, 1.15]` 扩充到 `[..., 1.25, 1.5]`，覆盖 125%/150% 系统 DPI 缩放时模板尺寸不匹配的情况
 
 如果改完仍然漏检，下次出现"照片未发送"时趁 toast 还在屏幕上重新截图更新 `templates/send_failed_text.png`。
+
+---
+
+## 修复：文件路径正斜杠导致"文件名无效"
+
+2026-06-30 调度触发时发现：`_select_images_dialog` 把路径写入 Windows 文件对话框后，对话框弹出"文件名无效"，文件始终选不上，导致任务失败（报"找不到发表按钮"——因为文件对话框没关、挡住了朋友圈弹窗，10 秒后点发表超时）。
+
+根因：`tkinter.filedialog.askopenfilenames` 在 Windows 上返回正斜杠路径（`D:/foo/bar.jpg`），但 Windows 标准文件对话框的 `WM_SETTEXT` 校验只接受反斜杠（`D:\foo\bar.jpg`），正斜杠被视为非法字符，直接报"文件名无效"。`test_publish.py` 不复现是因为它用 `os.path.join` 拼路径，在 Windows 上自然产生反斜杠。
+
+修复（`src/publisher.py`）：
+- `_select_images_dialog`：写入前先 `norm = [p.replace("/", "\\") for p in image_paths]`
+- `_select_video_dialog`：`SendMessageW` 参数改为 `video_path.replace("/", "\\")`
+
+验证：用正斜杠路径直接调 `execute_publish()`，文件对话框正常接受路径（无"文件名无效"弹窗），选图步骤通过，后续失败是微信风控（"照片未发送"），不是路径问题。
