@@ -168,13 +168,45 @@ def execute_publish(task: dict) -> dict:
     # 同时扫主窗口，防止 toast 出现在主窗口而非朋友圈弹窗。
     check_timeout = 20.0
     if _wait_for_send_failure(moments_hwnd, check_timeout, main_hwnd=hwnd):
-        _error_shot(moments_hwnd, "send_failed")
-        return {"success": False, "reason": "发送失败（未发送，可能是账号风控或网络问题）"}
+        _error_shot(moments_hwnd, "send_failed_1st")
+        # 出现"未发送"后等 3-6 秒，点击横幅触发重发
+        if _retry_failed_send(moments_hwnd, main_hwnd=hwnd):
+            # 重发按钮点到了，再等一轮确认是否成功
+            if _wait_for_send_failure(moments_hwnd, check_timeout, main_hwnd=hwnd):
+                _error_shot(moments_hwnd, "send_failed_retry")
+                return {"success": False, "reason": "重发后仍失败（账号风控或网络问题）"}
+            close_window(moments_hwnd)
+            return {"success": True, "reason": ""}
+        else:
+            _error_shot(moments_hwnd, "send_failed")
+            return {"success": False, "reason": "发送失败（未发送，重发按钮未找到）"}
 
     # 发布成功后把朋友圈弹窗关掉，避免残留挡住下一个账号的操作
     close_window(moments_hwnd)
 
     return {"success": True, "reason": ""}
+
+
+def _retry_failed_send(moments_hwnd: int, main_hwnd: int = None) -> bool:
+    """检测到"未发送"横幅后，等 3-6 秒点击横幅，再找"重新发送"按钮触发重发。
+    需要模板 retry_btn.png（"重新发送"文字区域截图）。
+    返回 True 表示成功点到了重发按钮；False 表示找不到，不重发。
+    """
+    time.sleep(random.uniform(3.0, 6.0))
+
+    # 点击"未发送"横幅，让微信弹出重发选项
+    rect = get_window_rect(moments_hwnd)
+    if not find_and_click("send_failed_text.png", rect, timeout=3, hwnd=moments_hwnd):
+        if main_hwnd and main_hwnd != moments_hwnd:
+            main_rect = get_window_rect(main_hwnd)
+            find_and_click("send_failed_text.png", main_rect, timeout=3, hwnd=main_hwnd)
+    time.sleep(random.uniform(0.8, 1.5))
+
+    # 找"重新发送"按钮并点击
+    rect = get_window_rect(moments_hwnd)
+    if find_and_click("retry_btn.png", rect, timeout=4, hwnd=moments_hwnd):
+        return True
+    return False
 
 
 def _select_images_dialog(image_paths: list[str]) -> bool:
