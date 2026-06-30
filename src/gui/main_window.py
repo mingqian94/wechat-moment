@@ -490,6 +490,9 @@ class MainWindow:
 
         self._refresh_tree()
         self._hide_add_panel()
+        # 确定任务后自动启动调度（若未运行）
+        if not self._is_running:
+            self._start()
 
     def _parse_time(self, s: str):
         from datetime import datetime

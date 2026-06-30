@@ -84,7 +84,17 @@ class App:
         tasks = self.main_win.tasks
         hwnd_map = {w["alias"]: w["hwnd"] for w in self.windows}
         for task in tasks:
-            task["hwnd"] = hwnd_map.get(task["alias"], 0)
+            if not task.get("hwnd"):
+                task["hwnd"] = hwnd_map.get(task["alias"], 0)
+
+        # 调度器已在运行时，只追加新任务，不重建
+        if self.scheduler and self.scheduler._running:
+            existing_ids = {id(t) for t in self.scheduler.schedule}
+            added = [t for t in tasks if id(t) not in existing_ids]
+            if added:
+                self.scheduler.schedule.extend(added)
+                self.main_win.log(f"已追加 {len(added)} 条新任务到队列")
+            return
 
         self.scheduler = Scheduler(
             schedule=tasks,
