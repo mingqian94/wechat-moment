@@ -188,13 +188,12 @@ def execute_publish(task: dict) -> dict:
 
 
 def _retry_failed_send(moments_hwnd: int, main_hwnd: int = None) -> bool:
-    """检测到"未发送"横幅后，等 3-6 秒点击横幅，再找"重新发送"按钮触发重发。
-    需要模板 retry_btn.png（"重新发送"文字区域截图）。
-    返回 True 表示成功点到了重发按钮；False 表示找不到，不重发。
+    """检测到"未发送"横幅后，等 3-6 秒点击横幅，再点「发表」触发重发。
+    返回 True 表示成功点到了发表按钮；False 表示找不到，不重发。
     """
     time.sleep(random.uniform(3.0, 6.0))
 
-    # 点击"未发送"横幅，让微信弹出重发选项
+    # 点击"未发送"横幅，微信会弹出包含「发表」按钮的重发对话框
     rect = get_window_rect(moments_hwnd)
     if not find_and_click("send_failed_text.png", rect, timeout=3, hwnd=moments_hwnd):
         if main_hwnd and main_hwnd != moments_hwnd:
@@ -202,9 +201,9 @@ def _retry_failed_send(moments_hwnd: int, main_hwnd: int = None) -> bool:
             find_and_click("send_failed_text.png", main_rect, timeout=3, hwnd=main_hwnd)
     time.sleep(random.uniform(0.8, 1.5))
 
-    # 找"重新发送"按钮并点击
+    # 弹出的重发对话框与首次发表相同，直接复用 post_btn.png（「发表」绿色按钮）
     rect = get_window_rect(moments_hwnd)
-    if find_and_click("retry_btn.png", rect, timeout=4, hwnd=moments_hwnd):
+    if find_and_click("post_btn.png", rect, timeout=4, hwnd=moments_hwnd):
         return True
     return False
 
