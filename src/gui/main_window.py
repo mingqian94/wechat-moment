@@ -240,7 +240,9 @@ class MainWindow:
 
         # 文案
         row_label("文案")
-        self.caption_text = tk.Text(panel, height=4, font=("", 10), wrap="word", relief="solid", bd=1)
+        import sys
+        _caption_font = ("Segoe UI Emoji", 10) if sys.platform == "win32" else ("", 10)
+        self.caption_text = tk.Text(panel, height=4, font=_caption_font, wrap="word", relief="solid", bd=1)
         self.caption_text.pack(fill="x", padx=pad_x)
 
         # 发布时段
@@ -691,17 +693,16 @@ class MainWindow:
             return
         times = [t.get("scheduled_str", "") for t in self.tasks if t.get("scheduled_str")]
         end_time = max(times) if times else ""
-        tip = "发布过程中程序将自动控制鼠标和键盘操作微信，请勿使用电脑。"
-        if end_time:
-            tip += f"\n\n预计最晚完成时间：{end_time}"
-        if not messagebox.askokcancel("开始发布", tip):
-            return
         self._is_running = True
         self.start_btn.config(state="disabled")
         for t in self.tasks:
             if t.get("status") == "待发布":
                 t["status"] = "等待中"
         self._refresh_tree()
+        tip = "⚠ 发布过程中请勿使用电脑（程序将自动操作微信）"
+        if end_time:
+            tip += f"，预计最晚 {end_time} 完成"
+        self.log(tip)
         self.on_start()
 
     def _stop(self):
