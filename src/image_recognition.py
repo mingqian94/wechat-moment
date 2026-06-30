@@ -14,7 +14,29 @@ import sys as _sys
 _BASE = Path(_sys._MEIPASS) if getattr(_sys, "frozen", False) else Path(__file__).parent.parent
 TEMPLATES_DIR = _BASE / "templates"
 MATCH_THRESHOLD = 0.80   # OpenCV 相似度阈值（0-1）
-SCALES = [1.0, 0.9, 0.85, 0.8, 1.1, 1.15, 1.25, 1.5]  # 多尺度容错，含 125%/150% 系统缩放
+
+# 模板在 200% DPI（dpi=192）的机器上截取，物理像素对应此 DPI。
+# 换到其他 DPI 的机器时，按钮物理像素大小按比例缩放，需要动态调整匹配尺度。
+_TEMPLATE_DPI = 192  # 模板截取时的 DPI（96 × 缩放比）
+
+def _system_dpi() -> int:
+    if not IS_WINDOWS:
+        return 96
+    try:
+        import ctypes
+        # 临时以 DPI-unaware 模式查询系统 DPI，避免受进程 DPI 感知模式干扰
+        return ctypes.windll.user32.GetDpiForSystem()
+    except Exception:
+        return 96
+
+_current_dpi = _system_dpi()
+_base_scale = _current_dpi / _TEMPLATE_DPI   # e.g. 100%→0.5, 125%→0.625, 150%→0.75, 200%→1.0
+# 以基准缩放为中心，覆盖 ±25% 范围，共 9 个候选尺度
+SCALES = sorted({
+    round(_base_scale + d, 3)
+    for d in [-0.25, -0.15, -0.08, -0.04, 0.0, 0.04, 0.08, 0.15, 0.25]
+    if 0.25 <= _base_scale + d <= 2.5
+})
 
 _template_cache: dict[str, np.ndarray | None] = {}
 
