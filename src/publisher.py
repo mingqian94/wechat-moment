@@ -31,19 +31,25 @@ def _error_shot(hwnd: int, step: str):
     take_screenshot(rect, path)
 
 
-def _wait_for_send_failure(hwnd: int, timeout: float) -> bool:
+def _wait_for_send_failure(hwnd: int, timeout: float, main_hwnd: int = None) -> bool:
     """点完发表后轮询检测"未发送"提示是否出现（图片/视频上传到这步才真正完成或失败，
     点完发表按钮那一刻只代表点击成功，不代表真的发出去了）。
     用"照片未发送"/"视频未发送"两种文案共有的"未发送"三个字做模板匹配——这三个字是纯文字
     渲染不会变，但图标本身会变色/动画，不能用图标做模板（踩过的坑）。
     timeout 内出现就是失败，返回 True；一直没出现，在没有更可靠的"成功"信号的情况下，
     只能视为成功，返回 False。
+    main_hwnd: 主微信窗口，失败 toast 有时出现在主窗口而非朋友圈弹窗，同时扫两个。
     """
     deadline = time.time() + timeout
     while time.time() < deadline:
         rect = get_window_rect(hwnd)
         if find_template("send_failed_text.png", rect, hwnd=hwnd):
             return True
+        # 同时检查主窗口（多账号风控时 toast 可能出现在主窗口）
+        if main_hwnd and main_hwnd != hwnd:
+            main_rect = get_window_rect(main_hwnd)
+            if find_template("send_failed_text.png", main_rect, hwnd=main_hwnd):
+                return True
         time.sleep(random.uniform(0.7, 1.3))
     return False
 
@@ -158,9 +164,10 @@ def execute_publish(task: dict) -> dict:
     time.sleep(random.uniform(1.7, 2.6))  # 先等一下，让"未发送"有机会出现
 
     # 点发表只代表点击成功，不代表真的发出去了——图片/视频上传完成（或失败）还要等一会儿。
-    # 等够时间、确认没出现"未发送"才算成功；图片给的等待时间短，视频给的长，因为视频处理更慢。
-    check_timeout = 12.0 if media_type == "video" else 8.0
-    if _wait_for_send_failure(moments_hwnd, check_timeout):
+    # 视频 20s，图片 20s（风控导致的失败信号可能延迟超过 8s，之前 8s 会漏检）。
+    # 同时扫主窗口，防止 toast 出现在主窗口而非朋友圈弹窗。
+    check_timeout = 20.0
+    if _wait_for_send_failure(moments_hwnd, check_timeout, main_hwnd=hwnd):
         _error_shot(moments_hwnd, "send_failed")
         return {"success": False, "reason": "发送失败（未发送，可能是账号风控或网络问题）"}
 

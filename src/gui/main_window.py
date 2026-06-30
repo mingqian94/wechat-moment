@@ -96,12 +96,12 @@ class MainWindow:
         self._refresh_accounts()
 
         # ── 主内容区（任务列表 + 添加任务面板）───────────────
-        self.main_paned = tk.PanedWindow(root, orient="horizontal", bg="#ddd")
+        self.main_paned = tk.PanedWindow(root, orient="vertical", bg="#ddd")
         self.main_paned.pack(fill="both", expand=True, padx=16, pady=8)
 
-        # 左侧：任务列表
+        # 上方：任务列表
         left_frame = tk.Frame(self.main_paned, bg="#f5f5f5")
-        self.main_paned.add(left_frame, minsize=400)
+        self.main_paned.add(left_frame, minsize=160)
 
         # 任务列表标题 + 操作按钮
         task_hdr = tk.Frame(left_frame, bg="#f5f5f5")
@@ -291,7 +291,7 @@ class MainWindow:
         self._reset_add_panel()
         self.add_panel_title.config(text="添加任务")
         self._edit_idx = None
-        self.main_paned.add(self.add_panel, minsize=480)
+        self.main_paned.add(self.add_panel, minsize=340)
         self._refresh_account_checkboxes()
 
     def _hide_add_panel(self):
@@ -432,9 +432,6 @@ class MainWindow:
             messagebox.showwarning("提示", "请选择素材文件夹")
             return
         caption = self.caption_text.get("1.0", "end").strip()
-        if not caption:
-            messagebox.showwarning("提示", "请输入文案")
-            return
         selected_aliases = [a for a, v in self._alias_vars.items() if v.get()]
         if not selected_aliases:
             messagebox.showwarning("提示", "请至少选择一个账号")
@@ -638,7 +635,7 @@ class MainWindow:
         for alias, var in self._alias_vars.items():
             var.set(alias == task.get("alias", ""))
 
-        self.main_paned.add(self.add_panel, minsize=480)
+        self.main_paned.add(self.add_panel, minsize=340)
 
     def _show_ctx_menu(self, event):
         item = self.tree.identify_row(event.y)
