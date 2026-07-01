@@ -9,7 +9,7 @@ import pyautogui
 import pyperclip
 
 from window_manager import activate_window, get_window_rect, find_moments_window, close_window
-from image_recognition import find_and_click, find_template, take_screenshot
+from image_recognition import find_and_click, find_template, take_screenshot, save_match_view
 
 IS_WINDOWS = platform.system() == "Windows"
 
@@ -29,6 +29,24 @@ def _error_shot(hwnd: int, step: str):
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     path = str(SCREENSHOT_DIR / f"error_{ts}_{step}.png")
     take_screenshot(rect, path)
+    # 同时存一份识别真正用来比对的那张图（PrintWindow 截取），
+    # 跟上面普通屏幕截图不是同一路径，排查"找不到按钮"必须看这张才是真相
+    match_path = str(SCREENSHOT_DIR / f"error_{ts}_{step}_matchview.png")
+    save_match_view(rect, hwnd, match_path)
+
+
+def _nudge_repaint(hwnd: int, rect: tuple[int, int, int, int]):
+    """窗口刚从隐藏/最小化恢复时，部分分层渲染区域（如侧边导航栏）可能还没重绘，
+    移动鼠标划过窗口内部能触发一次真实重绘，比单纯延时等待更可靠。仅 Windows 有效。"""
+    if not IS_WINDOWS:
+        return
+    try:
+        x, y, w, h = rect
+        pyautogui.moveTo(x + w // 3, y + h // 2, duration=0.12)
+        time.sleep(0.15)
+        pyautogui.moveTo(x + w // 4, y + h // 3, duration=0.12)
+    except Exception:
+        pass
 
 
 def _wait_for_send_failure(hwnd: int, timeout: float, main_hwnd: int = None) -> bool:
@@ -101,12 +119,16 @@ def execute_publish(task: dict) -> dict:
     # ── Step 1: 激活窗口 ──────────────────────────────────
     if not activate_window(hwnd):
         return {"success": False, "reason": "窗口激活失败"}
-    _sleep()
 
     rect = get_window_rect(hwnd)
+    # 微信从"失焦隐藏"状态被唤起后，侧边导航栏（左侧朋友圈图标所在区域）刷新可能滞后于
+    # 窗口其余部分，PrintWindow 有概率截到还没重绘完成的旧画面——多试几次比单纯等更久更可靠，
+    # 用鼠标轻微移入窗口触发一次真实重绘，而不是干等一个固定时长。
+    _nudge_repaint(hwnd, rect)
+    _sleep()
 
     # ── Step 2: 点击朋友圈入口 ────────────────────────────
-    if not find_and_click("moments_btn.png", rect, timeout=6, hwnd=hwnd):
+    if not find_and_click("moments_btn.png", rect, timeout=10, hwnd=hwnd):
         _error_shot(hwnd, "moments_btn")
         return {"success": False, "reason": "找不到朋友圈按钮"}
     _sleep()

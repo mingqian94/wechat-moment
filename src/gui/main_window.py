@@ -121,6 +121,12 @@ class MainWindow:
         ttk.Button(ctrl_frame, text="⚡ 手动发送", command=self._manual_send).pack(side="left", padx=(0, 4))
         ttk.Button(ctrl_frame, text="⏹ 全部停止", command=self._stop).pack(side="left", padx=4)
 
+        # 发布中提示（界面里显示，不进日志——不是运行记录，是操作提醒）
+        self.running_warn_var = tk.StringVar(value="")
+        self.running_warn_label = tk.Label(left_frame, textvariable=self.running_warn_var,
+                                            font=("", 9), fg="#e67e22", bg="#fff8e1", anchor="w")
+        self.running_warn_label.pack(fill="x", pady=(0, 4))
+
         list_frame = tk.Frame(left_frame, bg="#f5f5f5")
         list_frame.pack(fill="both", expand=True)
 
@@ -243,9 +249,11 @@ class MainWindow:
         _caption_font = ("Segoe UI Emoji", 10) if sys.platform == "win32" else ("", 10)
         self.caption_text = tk.Text(panel, height=4, font=_caption_font, wrap="word", relief="solid", bd=1)
         self.caption_text.pack(fill="x", padx=pad_x)
+        tk.Label(panel, text="提示：表情符号在此处会显示为方块，属于输入框显示限制，不影响实际发布效果",
+                 font=("", 8), fg="#888", bg="#f5f5f5", anchor="w").pack(fill="x", padx=pad_x, pady=(2, 0))
 
         # 发布时段
-        row_label("发布时段（至少 10 分钟）")
+        row_label("发布时段（至少 3 分钟）")
         time_frame = tk.Frame(panel, bg="#f5f5f5")
         time_frame.pack(fill="x", padx=pad_x)
         self.start_var = tk.StringVar(value="09:00")
@@ -451,8 +459,8 @@ class MainWindow:
         if t_start < now:
             messagebox.showwarning("提示", f"开始时间不能早于当前时间（{now.strftime('%H:%M')}）")
             return
-        if (t_end - t_start).total_seconds() < 10 * 60:
-            messagebox.showwarning("提示", "时段至少 10 分钟")
+        if (t_end - t_start).total_seconds() < 3 * 60:
+            messagebox.showwarning("提示", "时段至少 3 分钟")
             return
 
         slot_sec = int((t_end - t_start).total_seconds())
@@ -479,7 +487,7 @@ class MainWindow:
                 "caption": caption,
                 "prefer_time": t.strftime("%H:%M"),
                 "scheduled_time": t,
-                "scheduled_str": t.strftime("%H:%M"),
+                "scheduled_str": t.strftime("%H:%M:%S"),
                 "status": "待发布",
             })
 
@@ -704,7 +712,7 @@ class MainWindow:
         tip = "⚠ 发布过程中请勿使用电脑（程序将自动操作微信）"
         if end_time:
             tip += f"，预计最晚 {end_time} 完成"
-        self.log(tip)
+        self.running_warn_var.set(tip)
         self.on_start()
 
     def _manual_send(self):
@@ -733,6 +741,7 @@ class MainWindow:
             if t.get("status") in ("等待中", "发布中", "等待上一个任务完成"):
                 t["status"] = "待发布"
         self._refresh_tree()
+        self.running_warn_var.set("")
         self.on_stop()
 
     def on_all_done(self):
@@ -765,6 +774,7 @@ class MainWindow:
                 self._refresh_tree()
             elif cmd[0] == "all_done":
                 self._is_running = False
+                self.running_warn_var.set("")
                 self.log("今日任务全部完成 ✓")
         self.root.after(200, self._poll_log)
 

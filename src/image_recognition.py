@@ -140,6 +140,20 @@ def _grab_region(x: int, y: int, w: int, h: int, hwnd: int = None) -> np.ndarray
     return cv2.cvtColor(np.array(screenshot), cv2.COLOR_RGB2BGR)
 
 
+def save_match_view(region: tuple[int, int, int, int], hwnd: int, save_path: str):
+    """把 find_template 实际用来比对的那张图存下来（跟 take_screenshot 的 ImageGrab 不是同一路径，
+    诊断"找不到按钮"时必须看这张图，而不是普通截图，两者在窗口未及时重绘时可能不一致）。
+    这里不能直接用 cv2.imwrite——它在 Windows 上遇到含中文的路径会静默失败（返回 False 但不报错，
+    错误截图目录"错误截图"本身就是中文），改用 cv2.imencode 编码后用普通文件句柄写，规避这个坑。"""
+    rx, ry, rw, rh = region
+    screen = _grab_region(rx, ry, rw, rh, hwnd=hwnd)
+    Path(save_path).parent.mkdir(parents=True, exist_ok=True)
+    ok, buf = cv2.imencode(".png", screen)
+    if ok:
+        with open(save_path, "wb") as f:
+            f.write(buf.tobytes())
+
+
 def find_template(template_name: str, region: tuple[int, int, int, int] | None = None,
                   hwnd: int = None
                   ) -> tuple[int, int] | None:
