@@ -272,8 +272,8 @@ def _select_video_dialog(video_paths: list[str]) -> bool:
         print(f"[Publisher] 警告：微信一次只能发一个视频，已取第一个: {video_paths[0]}")
     video_path = video_paths[0]
 
-    # 用 class 名匹配比标题更可靠，#32770 是 Windows 标准文件对话框
-    deadline = time.time() + 8
+    # 视频弹窗比图片慢，给 15s；#32770 是 Windows 标准文件对话框
+    deadline = time.time() + 15
     dialog_hwnd = 0
     while time.time() < deadline:
         dialog_hwnd = ctypes.windll.user32.FindWindowW("#32770", None)
@@ -284,8 +284,6 @@ def _select_video_dialog(video_paths: list[str]) -> bool:
     if not dialog_hwnd:
         return False
 
-    # 尝试切换到"视频"视图（部分微信版本需要）
-    # 先尝试发送 Ctrl+2 切换到视频标签（如果文件管理器支持）
     ctypes.windll.user32.SetForegroundWindow(dialog_hwnd)
     time.sleep(random.uniform(0.15, 0.28))
 

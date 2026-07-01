@@ -1,5 +1,4 @@
 # -*- mode: python ; coding: utf-8 -*-
-import sys
 from pathlib import Path
 
 ROOT = Path(SPECPATH)
@@ -29,16 +28,12 @@ pyz = PYZ(a.pure)
 exe = EXE(
     pyz,
     a.scripts,
-    a.binaries,
-    a.datas,
     [],
     name='朋友圈发布助手',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
     upx=False,
-    upx_exclude=[],
-    runtime_tmpdir=None,
     console=False,
     disable_windowed_traceback=False,
     argv_emulation=False,
@@ -47,4 +42,13 @@ exe = EXE(
     entitlements_file=None,
     icon=str(ROOT / 'app_icon.ico'),
     uac_admin=False,
+)
+
+coll = COLLECT(
+    exe,
+    a.binaries,
+    a.datas,
+    strip=False,
+    upx=False,
+    name='朋友圈发布助手',
 )

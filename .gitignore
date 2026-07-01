@@ -14,6 +14,10 @@ activation.dat
 # 模板图：默认模板已打包进仓库（见 templates/），通常不用自己截
 # 如果在某台机器上重新校准过，新的模板图会以"已修改"出现，正常提交覆盖即可
 
+# PyInstaller 打包产物（体积大，不进仓库，本地重新打包即可）
+build/
+dist/
+
 # macOS
 .DS_Store
 
