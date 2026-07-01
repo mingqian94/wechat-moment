@@ -124,6 +124,10 @@ class Scheduler:
             if not self._running:
                 break
 
+            # 跳过已成功发布的任务（停止后重启时保留已发布结果）
+            if task.get("status") == "已发布":
+                continue
+
             # 等待到发布时间
             self._wait_until(task["scheduled_time"])
 

@@ -43,13 +43,14 @@ def _wait_for_send_failure(hwnd: int, timeout: float, main_hwnd: int = None) -> 
     deadline = time.time() + timeout
     while time.time() < deadline:
         rect = get_window_rect(hwnd)
-        if find_template("send_failed_text.png", rect, hwnd=hwnd):
-            return True
-        # 同时检查主窗口（多账号风控时 toast 可能出现在主窗口）
+        for tpl in ("send_failed_text.png", "video_failed_text.png"):
+            if find_template(tpl, rect, hwnd=hwnd):
+                return True
         if main_hwnd and main_hwnd != hwnd:
             main_rect = get_window_rect(main_hwnd)
-            if find_template("send_failed_text.png", main_rect, hwnd=main_hwnd):
-                return True
+            for tpl in ("send_failed_text.png", "video_failed_text.png"):
+                if find_template(tpl, main_rect, hwnd=main_hwnd):
+                    return True
         time.sleep(random.uniform(0.7, 1.3))
     return False
 
@@ -193,12 +194,18 @@ def _retry_failed_send(moments_hwnd: int, main_hwnd: int = None) -> bool:
     """
     time.sleep(random.uniform(3.0, 6.0))
 
-    # 点击"未发送"横幅，微信会弹出包含「发表」按钮的重发对话框
+    # 点击"未发送"横幅（照片或视频），微信会弹出包含「发表」按钮的重发对话框
     rect = get_window_rect(moments_hwnd)
-    if not find_and_click("send_failed_text.png", rect, timeout=3, hwnd=moments_hwnd):
-        if main_hwnd and main_hwnd != moments_hwnd:
-            main_rect = get_window_rect(main_hwnd)
-            find_and_click("send_failed_text.png", main_rect, timeout=3, hwnd=main_hwnd)
+    clicked = False
+    for tpl in ("send_failed_text.png", "video_failed_text.png"):
+        if find_and_click(tpl, rect, timeout=2, hwnd=moments_hwnd):
+            clicked = True
+            break
+    if not clicked and main_hwnd and main_hwnd != moments_hwnd:
+        main_rect = get_window_rect(main_hwnd)
+        for tpl in ("send_failed_text.png", "video_failed_text.png"):
+            if find_and_click(tpl, main_rect, timeout=2, hwnd=main_hwnd):
+                break
     time.sleep(random.uniform(0.8, 1.5))
 
     # 弹出的重发对话框与首次发表相同，直接复用 post_btn.png（「发表」绿色按钮）

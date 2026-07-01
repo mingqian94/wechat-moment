@@ -118,8 +118,7 @@ class MainWindow:
         ctrl_frame = tk.Frame(left_frame, bg="#f5f5f5")
         ctrl_frame.pack(fill="x", pady=4)
         ttk.Button(ctrl_frame, text="＋ 添加任务", command=self._toggle_add_panel).pack(side="left", padx=(0, 6))
-        self.start_btn = ttk.Button(ctrl_frame, text="▶ 开始全部", command=self._start)
-        self.start_btn.pack(side="left", padx=(0, 4))
+        ttk.Button(ctrl_frame, text="⚡ 手动发送", command=self._manual_send).pack(side="left", padx=(0, 4))
         ttk.Button(ctrl_frame, text="⏹ 全部停止", command=self._stop).pack(side="left", padx=4)
 
         list_frame = tk.Frame(left_frame, bg="#f5f5f5")
@@ -365,9 +364,10 @@ class MainWindow:
 
         return valid_files, None
 
-    def _set_selected_files(self, files: list[str], source_name: str):
-        """设置选中的文件并更新界面"""
-        valid_files, error = self._validate_files(files)
+    def _set_selected_files(self, files: list[str], source_name: str, append: bool = False):
+        """设置/追加选中的文件并更新界面"""
+        all_files = (list(self.selected_images) + list(files)) if append and self.selected_images else list(files)
+        valid_files, error = self._validate_files(all_files)
         if error:
             messagebox.showwarning("提示", error)
             return
@@ -404,8 +404,8 @@ class MainWindow:
         )
         if not files:
             return
-        # 保持用户选择的顺序
-        self._set_selected_files(list(files), "自选文件")
+        # 追加到已有列表（选文件夹是替换，选文件是追加）
+        self._set_selected_files(list(files), "自选文件", append=True)
 
     def _media_label(self) -> str:
         imgs = sum(1 for f in self.selected_images
@@ -697,7 +697,6 @@ class MainWindow:
         times = [t.get("scheduled_str", "") for t in self.tasks if t.get("scheduled_str")]
         end_time = max(times) if times else ""
         self._is_running = True
-        self.start_btn.config(state="disabled")
         for t in self.tasks:
             if t.get("status") == "待发布":
                 t["status"] = "等待中"
@@ -708,9 +707,32 @@ class MainWindow:
         self.log(tip)
         self.on_start()
 
+    def _manual_send(self):
+        """对选中任务立即发布（不等调度时间）"""
+        sel = self.tree.selection()
+        if not sel:
+            messagebox.showinfo("提示", "请先在列表中选择要发送的任务")
+            return
+        idx = self.tree.index(sel[0])
+        if not (0 <= idx < len(self.tasks)):
+            return
+        task = self.tasks[idx]
+        if task.get("status") == "已发布":
+            messagebox.showinfo("提示", "该任务已发布成功，无需重复发送")
+            return
+        task["status"] = "等待中"
+        self._refresh_tree()
+        if self.on_retry:
+            self.on_retry(task)
+        self.log(f"手动发送：{task.get('alias')} {task.get('scheduled_str', '')}")
+
     def _stop(self):
         self._is_running = False
-        self.start_btn.config(state="normal")
+        # 只重置未完成的任务，已发布状态保持不变
+        for t in self.tasks:
+            if t.get("status") in ("等待中", "发布中", "等待上一个任务完成"):
+                t["status"] = "待发布"
+        self._refresh_tree()
         self.on_stop()
 
     def on_all_done(self):
@@ -743,7 +765,6 @@ class MainWindow:
                 self._refresh_tree()
             elif cmd[0] == "all_done":
                 self._is_running = False
-                self.start_btn.config(state="normal")
                 self.log("今日任务全部完成 ✓")
         self.root.after(200, self._poll_log)
 
