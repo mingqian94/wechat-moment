@@ -349,6 +349,52 @@ if IS_WINDOWS:
         except Exception:
             return False
 
+    def raise_window(hwnd: int):
+        """把窗口强制拉到普通窗口的最顶层（短暂 TOPMOST 再取消）。
+        SetForegroundWindow 只给键盘焦点，压在上面的其他普通窗口不一定让开，
+        置顶悬浮窗更是完全不受它影响，需要这种硬置顶手段。"""
+        HWND_TOPMOST = -1
+        HWND_NOTOPMOST = -2
+        SWP_NOMOVE = 0x0002
+        SWP_NOSIZE = 0x0001
+        user32.SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE)
+        user32.SetWindowPos(hwnd, HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE)
+
+    def get_occluder_title(hwnd: int) -> str | None:
+        """实测窗口左侧导航栏区域是否被其他顶层窗口遮挡。
+        桌面截图是所见即所得，任何窗口压在微信上面都会被一起截进去导致按钮匹配失败，
+        而 activate_window 成功只代表拿到键盘焦点，不代表视觉上没被挡。
+        取导航栏中部一个屏幕点，用 WindowFromPoint 看它实际归属的顶层窗口：
+        是自己返回 None；被挡则返回遮挡窗口的标题（用于日志定位是谁挡的）。"""
+        rect = get_window_rect(hwnd)
+        if not rect:
+            return None
+        x, y, w, h = rect
+        try:
+            dpi = user32.GetDpiForSystem()
+        except Exception:
+            dpi = 96
+        # 导航栏是固定逻辑宽度，物理像素位置随 DPI 缩放（36 逻辑像素 ≈ 图标列中心）
+        px = x + max(20, int(36 * dpi / 96))
+        py = y + h // 2
+
+        class _POINT(ctypes.Structure):
+            _fields_ = [("x", ctypes.c_long), ("y", ctypes.c_long)]
+
+        _WindowFromPoint = user32.WindowFromPoint
+        _WindowFromPoint.argtypes = [_POINT]
+        _WindowFromPoint.restype = ctypes.c_void_p
+        top = _WindowFromPoint(_POINT(px, py))
+        if not top:
+            return None
+        GA_ROOT = 2
+        root = user32.GetAncestor(ctypes.c_void_p(top), GA_ROOT)
+        if root == hwnd:
+            return None
+        buf = ctypes.create_unicode_buffer(256)
+        user32.GetWindowTextW(ctypes.c_void_p(root), buf, 256)
+        return buf.value or "(无标题窗口)"
+
 else:
     # Mac / 开发模式：返回 mock 数据，不做实际操作
     _MOCK_WINDOWS = [
@@ -373,6 +419,12 @@ else:
     def close_window(hwnd: int) -> bool:
         print(f"[Mock] close_window hwnd={hwnd}")
         return True
+
+    def raise_window(hwnd: int):
+        print(f"[Mock] raise_window hwnd={hwnd}")
+
+    def get_occluder_title(hwnd: int) -> str | None:
+        return None
 
 
 def bind_aliases(windows: list[dict]) -> list[dict]:

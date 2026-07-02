@@ -134,6 +134,11 @@ class Scheduler:
             if not self._running:
                 break
 
+            # 等待期间任务可能已被"手动发送"发出去了（手动发送走独立线程，不经过本循环），
+            # 等完必须重新检查状态，否则会把同一条再发一遍，失败时还会覆盖掉已发布状态
+            if task.get("status") == "已发布":
+                continue
+
             # 如果上一个任务还在发布中，等待其完成（失败也视为完成）
             if self._publishing:
                 cb_waiting = self.callbacks.get("on_task_status")
@@ -145,6 +150,10 @@ class Scheduler:
 
             if not self._running:
                 break
+
+            # 排队等待期间也可能被手动发送处理掉，再查一次
+            if task.get("status") == "已发布":
+                continue
 
             self._publishing = True
             cb_start = self.callbacks.get("on_task_start")

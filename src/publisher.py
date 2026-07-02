@@ -8,7 +8,8 @@ from pathlib import Path
 import pyautogui
 import pyperclip
 
-from window_manager import activate_window, get_window_rect, find_moments_window, close_window
+from window_manager import (activate_window, get_window_rect, find_moments_window,
+                            close_window, raise_window, get_occluder_title)
 from image_recognition import find_and_click, find_template, take_screenshot, save_match_view
 
 IS_WINDOWS = platform.system() == "Windows"
@@ -127,10 +128,25 @@ def execute_publish(task: dict) -> dict:
     _nudge_repaint(hwnd, rect)
     _sleep()
 
+    # 桌面截图是所见即所得：任何窗口压在微信导航栏上（包括不受 SetForegroundWindow 影响的
+    # 置顶悬浮窗）都会被截进匹配图导致找不到按钮。激活成功≠没被挡，实测导航栏区域归属，
+    # 被挡就硬置顶重试；反复置顶仍被挡说明遮挡者也是置顶窗口，明确报出它是谁，不再瞎猜。
+    occluder = None
+    for attempt in range(4):
+        occluder = get_occluder_title(hwnd)
+        if not occluder:
+            break
+        if attempt < 3:
+            raise_window(hwnd)
+            time.sleep(random.uniform(0.5, 0.9))
+    if occluder:
+        _error_shot(hwnd, "occluded")
+        return {"success": False, "reason": f"微信窗口被「{occluder}」遮挡，请移开该窗口后重试"}
+
     # ── Step 2: 点击朋友圈入口 ────────────────────────────
     if not find_and_click("moments_btn.png", rect, timeout=10, hwnd=hwnd):
         _error_shot(hwnd, "moments_btn")
-        return {"success": False, "reason": "找不到朋友圈按钮"}
+        return {"success": False, "reason": f"找不到朋友圈按钮（窗口位置{rect}）"}
     _sleep()
 
     # 点击朋友圈后会弹出一个独立的新顶层窗口（不是主窗口的子区域），
@@ -187,9 +203,11 @@ def execute_publish(task: dict) -> dict:
     time.sleep(random.uniform(1.7, 2.6))  # 先等一下，让"未发送"有机会出现
 
     # 点发表只代表点击成功，不代表真的发出去了——图片/视频上传完成（或失败）还要等一会儿。
-    # 视频 20s，图片 20s（风控导致的失败信号可能延迟超过 8s，之前 8s 会漏检）。
+    # 图片 20s；视频 75s——2026-07-02 实测视频被风控拒发时，"视频未发送"横幅出现在点发表
+    # 几分钟后，20s 窗口检测不到，误报了成功。75s 是检测成本和漏检风险的折中，仍可能漏检
+    # 特别晚出现的横幅（彻底解决需要发布后回头巡检朋友圈，另行设计）。
     # 同时扫主窗口，防止 toast 出现在主窗口而非朋友圈弹窗。
-    check_timeout = 20.0
+    check_timeout = 75.0 if media_type == "video" else 20.0
     if _wait_for_send_failure(moments_hwnd, check_timeout, main_hwnd=hwnd):
         _error_shot(moments_hwnd, "send_failed_1st")
         # 出现"未发送"后等 3-6 秒，点击横幅触发重发

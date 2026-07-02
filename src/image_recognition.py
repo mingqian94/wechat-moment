@@ -44,9 +44,20 @@ _template_cache: dict[str, np.ndarray | None] = {}
 def _load_template(name: str) -> np.ndarray | None:
     if name not in _template_cache:
         path = TEMPLATES_DIR / name
-        _template_cache[name] = cv2.imread(str(path), cv2.IMREAD_COLOR) if path.exists() else None
+        tpl = None
+        if path.exists():
+            # 不能用 cv2.imread：它在 Windows 上遇到含中文的路径会静默返回 None（跟 imwrite 同款坑）。
+            # 打包后模板在 _internal 目录下，上级文件夹名"朋友圈发布助手"是中文，imread 必然失败，
+            # 而开发环境仓库路径全英文永远复现不了——这就是 onedir 打包后 100% "找不到按钮"的根因。
+            # 改用 np.fromfile（Python 层面开文件，unicode 安全）+ cv2.imdecode。
+            try:
+                data = np.fromfile(str(path), dtype=np.uint8)
+                tpl = cv2.imdecode(data, cv2.IMREAD_COLOR)
+            except Exception:
+                tpl = None
+        _template_cache[name] = tpl
         if _template_cache[name] is None:
-            print(f"[ImageRecog] 模板文件不存在: {name}")
+            print(f"[ImageRecog] 模板加载失败: {name}")
     return _template_cache[name]
 
 
