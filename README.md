@@ -540,9 +540,65 @@ style.configure("Treeview.Heading", font=("", 10, "bold"))
 
 当前假设：微信从"失焦隐藏"状态被重新唤起后，侧边导航栏（大概率是单独 GPU 合成的图层）重绘滞后于窗口其余部分；`PrintWindow` 有一定概率截到还没重绘完成的旧画面，且这张旧画面可能被短时缓存，6 秒内反复截图截到的都是同一张——重试次数再多也没用，因为问题不是"运气不好没截中"，是"一直读到同一张坏图"。
 
-这只是有依据的假设，还没有在失败瞬间抓到"匹配逻辑真正读到的那张图"来实锤，先按假设加了两处加固（`src/publisher.py`）：
+这只是有依据的假设，先按假设加了两处加固（`src/publisher.py`）：
 - 新增 `_nudge_repaint()`：激活窗口后用鼠标划过窗口内部触发一次真实重绘，代替单纯延时等待
 - `moments_btn.png` 的查找超时从 6 秒延长到 10 秒
-- `image_recognition.py` 新增 `save_match_view()`，把识别逻辑真正用来比对的那张图（而非普通 `ImageGrab` 截图）单独存一份，命名带 `_matchview` 后缀，下次失败能直接看到真相而不是靠猜
+- `image_recognition.py` 新增 `save_match_view()`，把识别逻辑真正用来比对的那张图（而非普通 `ImageGrab` 截图）单独存一份，命名带 `_matchview` 后缀
 
-**这个问题还没有验证是否真的解决**，需要重新打包后再测几轮，如果 `_matchview` 截图里侧边栏依然空白，说明假设方向错了，需要往别的方向查。
+结果：加固后 `moments_btn` 超时仍然复现，但这次拿到了 `_matchview` 截图——发现 `save_match_view()` 用的 `cv2.imwrite()` 在 Windows 上遇到中文路径（错误截图目录名就是中文）会**静默失败**，返回 `False` 但不报错，导致诊断图片实际根本没写出来。改用 `cv2.imencode()` 编码后走普通文件句柄写，绕开这个坑，才真正拿到证据。
+
+拿到证据后真相大白：两次 `_matchview` 截图内容都不是当前实时画面——一次是几小时前的另一个聊天窗口，一次是程序刚启动那一刻（19:16）的"文件传输助手"画面且侧边栏完全空白，跟当时的真实时间（22:43/22:44）对不上。而同一时刻用普通 `ImageGrab` 截的诊断图两次都是**实时、正确**的内容。结论：**`PrintWindow(PW_RENDERFULLCONTENT)` 对这个微信窗口不可靠，会返回冻结的旧缓存帧，不会随时间刷新**，跟侧边栏重绘滞后无关——不管重试多少次、等多久都没用，因为读到的一直是同一张坏图。
+
+`PrintWindow` 之所以最初被引入，是为了应对"窗口被遮挡时 BitBlt 桌面截图会透出背后桌面"的问题；但 `execute_publish` 截图前已经 `activate_window()` 把目标窗口真正置顶，遮挡风险已经不大。修复（`image_recognition.py` 的 `_grab_region`）：改为**桌面截图（ImageGrab）优先**，只有当桌面截图疑似空白/被遮挡（`std <= 5`）时才退回 `PrintWindow` 兜底。
+
+这个修复还没有实测验证，下次测试重点关注 `moments_btn` 这一步是否还失败。
+
+---
+
+## 改进：发布时段最短限制 10 分钟 → 3 分钟
+
+`main_window.py` 里"发布时段（至少 X 分钟）"的硬性校验从 10 分钟改成 3 分钟，方便手动测试时用更短的窗口。
+
+---
+
+## 改进：发布提醒改为常显，不再随开始/停止/完成清空
+
+"⚠ 发布过程中请勿使用电脑" 原来只在点击开始后才显示（`self.log(tip)`），且写进了运行日志——但这不是一条运行记录，是操作提醒，混进日志不合适，且实测发现任务几分钟内就能跑完，用户看到界面时提示已经被清空了，容易以为"没显示过"。
+
+改动（`main_window.py`）：
+- 提示单独用一个 `tk.Label`（`running_warn_var`）显示在按钮行下方，不再写入运行日志
+- 初始化时就常显这句提示，不再随"开始"设置、"停止"/"全部完成"清空——反正自动化程序随时可能被手动触发（比如"手动发送"），这句提醒本身没有过期的必要
+
+---
+
+## 修复：启动时检测微信窗口会把最后一个微信窗口留在最前面
+
+现象：打开 exe 后，程序自己的窗口没有出现在最前面，反而是被检测流程最后激活的那个微信窗口挡在最前。
+
+根因（`window_manager.py` 的 `find_wechat_windows()`）：检测每个微信账号是否登录时要读头像，读头像必须先 `activate_window()` 把对应微信窗口激活到前台（硬件加速渲染的区域不可见状态截不出来）。检测完所有账号后，函数原本想恢复到"检测前的前台窗口"：
+
+```python
+foreground_hwnd = user32.GetForegroundWindow()   # 这里拿到的窗口
+...                                                # 中间挨个激活微信窗口
+user32.SetForegroundWindow(foreground_hwnd)       # 想恢复，但两个问题：
+```
+
+问题①：`foreground_hwnd` 是在 `find_wechat_windows()` 调用时（`main.py` 的 `_launch_main()` 里，MainWindow 还没构造）抓的，那时程序自己的窗口根本还不存在，恢复目标从一开始就不是"我们自己的程序"。
+问题②：恢复用的是裸 `SetForegroundWindow`，不像 `activate_window()` 那样用 `AttachThreadInput` 技巧借前台线程的焦点权限——调用方不是当前前台进程时，这种裸调用经常被 Windows 焦点锁定机制直接拒绝，静默失败。
+
+两个问题叠加，效果就是：恢复没有生效，最后一个被 `activate_window()` 激活的微信窗口就留在了最前面。
+
+修复（`gui/main_window.py`）：`MainWindow.run()` 里，窗口构造完成、`mainloop()` 之前，主动用跟 `activate_window()` 同款的抢焦点逻辑对自己的窗口抢一次前台：
+
+```python
+from window_manager import activate_window
+...
+def run(self):
+    try:
+        activate_window(self.root.winfo_id())
+    except Exception:
+        pass
+    self.root.mainloop()
+```
+
+这个修复还没有实测验证。

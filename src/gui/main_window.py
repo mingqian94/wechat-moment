@@ -4,6 +4,8 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 from typing import Callable
 
+from window_manager import activate_window
+
 
 class MainWindow:
     def __init__(self, version: str, windows: list[dict],
@@ -121,8 +123,8 @@ class MainWindow:
         ttk.Button(ctrl_frame, text="⚡ 手动发送", command=self._manual_send).pack(side="left", padx=(0, 4))
         ttk.Button(ctrl_frame, text="⏹ 全部停止", command=self._stop).pack(side="left", padx=4)
 
-        # 发布中提示（界面里显示，不进日志——不是运行记录，是操作提醒）
-        self.running_warn_var = tk.StringVar(value="")
+        # 发布中提示（界面里显示，不进日志——不是运行记录，是操作提醒；常显，不随开始/停止/完成清空）
+        self.running_warn_var = tk.StringVar(value="⚠ 发布过程中请勿使用电脑（程序将自动操作微信）")
         self.running_warn_label = tk.Label(left_frame, textvariable=self.running_warn_var,
                                             font=("", 9), fg="#e67e22", bg="#fff8e1", anchor="w")
         self.running_warn_label.pack(fill="x", pady=(0, 4))
@@ -741,7 +743,6 @@ class MainWindow:
             if t.get("status") in ("等待中", "发布中", "等待上一个任务完成"):
                 t["status"] = "待发布"
         self._refresh_tree()
-        self.running_warn_var.set("")
         self.on_stop()
 
     def on_all_done(self):
@@ -774,7 +775,6 @@ class MainWindow:
                 self._refresh_tree()
             elif cmd[0] == "all_done":
                 self._is_running = False
-                self.running_warn_var.set("")
                 self.log("今日任务全部完成 ✓")
         self.root.after(200, self._poll_log)
 
@@ -785,4 +785,13 @@ class MainWindow:
         self.root.destroy()
 
     def run(self):
+        # 启动时检测微信窗口（find_wechat_windows）会逐个激活每个微信窗口来截头像判断登录状态，
+        # 检测完尝试恢复到"检测前的前台窗口"——但那时程序自己的窗口还没创建，且恢复用的裸
+        # SetForegroundWindow 在非前台进程调用时常被 Windows 焦点锁定机制拒绝，实际效果是
+        # 最后一个被激活的微信窗口留在最前面，程序自己的窗口反而在后面。这里创建完窗口后
+        # 主动抢一次前台，用跟 activate_window 一样的 AttachThreadInput 技巧确保抢占成功。
+        try:
+            activate_window(self.root.winfo_id())
+        except Exception:
+            pass
         self.root.mainloop()

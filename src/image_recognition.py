@@ -55,89 +55,66 @@ def reload_templates():
 
 
 def _grab_region(x: int, y: int, w: int, h: int, hwnd: int = None) -> np.ndarray:
-    """截取区域，支持通过 hwnd 直接截取窗口内容。
-    优先使用 PrintWindow(PW_RENDERFULLCONTENT)，能正确截取硬件加速/分层渲染的子区域
-    （如新版微信左侧导航栏）；桌面DC BitBlt 对这类区域会透出背后桌面像素，故仅作降级方案。
+    """截取区域，优先用桌面截图（ImageGrab），hwnd 仅在桌面截图疑似被遮挡时才用于 PrintWindow 兜底。
+
+    2026-07-01 实测发现 PrintWindow(PW_RENDERFULLCONTENT) 对微信这个窗口不可靠——曾经在识别失败
+    的瞬间截到一张几小时前的旧对话内容（陈旧缓存帧，不是实时画面），导致按钮明明在屏幕上却一直匹配
+    不到。反而普通桌面截图（ImageGrab/BitBlt）两次诊断都截到了真实、实时的内容。
+    之前用 PrintWindow 是为了应对"窗口被遮挡时 BitBlt 会透出背后桌面"的问题，但 execute_publish
+    在截图前已经 activate_window() 把目标窗口真正置顶，遮挡风险已经不大，改为桌面截图优先、
+    PrintWindow 仅作遮挡时的兜底（用 std 判断桌面截图是否疑似空白/被遮挡）。
     """
-    if hwnd and IS_WINDOWS:
-        try:
-            import ctypes
-            import win32gui
-            import win32ui
-            from ctypes import windll
-            import ctypes.wintypes as wintypes
-
-            # 方法1：PrintWindow（flag=2，PW_RENDERFULLCONTENT），正确处理硬件加速渲染区域
-            try:
-                rect = wintypes.RECT()
-                windll.user32.GetWindowRect(hwnd, ctypes.byref(rect))
-                win_x, win_y = rect.left, rect.top
-                win_w = rect.right - rect.left
-                win_h = rect.bottom - rect.top
-
-                rel_x = x - win_x
-                rel_y = y - win_y
-
-                hwndDC = win32gui.GetWindowDC(hwnd)
-                mfcDC = win32ui.CreateDCFromHandle(hwndDC)
-                saveDC = mfcDC.CreateCompatibleDC()
-                fullBitMap = win32ui.CreateBitmap()
-                fullBitMap.CreateCompatibleBitmap(mfcDC, win_w, win_h)
-                saveDC.SelectObject(fullBitMap)
-                windll.user32.PrintWindow(hwnd, saveDC.GetSafeHdc(), 2)
-
-                bmpstr = fullBitMap.GetBitmapBits(True)
-                img_full = np.frombuffer(bmpstr, dtype=np.uint8)
-                img_full.shape = (win_h, win_w, 4)
-
-                # 裁剪目标区域
-                rel_x = max(0, min(rel_x, win_w - w))
-                rel_y = max(0, min(rel_y, win_h - h))
-                crop = img_full[rel_y:rel_y+h, rel_x:rel_x+w]
-                img = cv2.cvtColor(crop, cv2.COLOR_BGRA2BGR)
-
-                win32gui.DeleteObject(fullBitMap.GetHandle())
-                saveDC.DeleteDC()
-                mfcDC.DeleteDC()
-                win32gui.ReleaseDC(hwnd, hwndDC)
-
-                if img.std() > 5:
-                    return img
-            except Exception as e:
-                print(f"[ImageRecog] PrintWindow失败: {e}")
-
-            # 方法2：桌面DC截图回退（部分硬件加速/分层区域可能透出背后桌面）
-            try:
-                desktop_hwnd = windll.user32.GetDesktopWindow()
-                desktopDC = win32gui.GetWindowDC(desktop_hwnd)
-                mfcDC = win32ui.CreateDCFromHandle(desktopDC)
-                saveDC = mfcDC.CreateCompatibleDC()
-                saveBitMap = win32ui.CreateBitmap()
-                saveBitMap.CreateCompatibleBitmap(mfcDC, w, h)
-                saveDC.SelectObject(saveBitMap)
-                saveDC.BitBlt((0, 0), (w, h), mfcDC, (x, y), 0x00CC0020)
-
-                bmpinfo = saveBitMap.GetInfo()
-                bmpstr = saveBitMap.GetBitmapBits(True)
-                img = np.frombuffer(bmpstr, dtype=np.uint8)
-                img.shape = (h, w, 4)
-                img = cv2.cvtColor(img, cv2.COLOR_BGRA2BGR)
-
-                win32gui.DeleteObject(saveBitMap.GetHandle())
-                saveDC.DeleteDC()
-                mfcDC.DeleteDC()
-                win32gui.ReleaseDC(desktop_hwnd, desktopDC)
-
-                return img
-            except Exception:
-                pass
-
-        except Exception as e:
-            print(f"[ImageRecog] 窗口截图失败，回退到屏幕截图: {e}")
-
-    # 回退：屏幕截图
     screenshot = ImageGrab.grab(bbox=(x, y, x + w, y + h))
-    return cv2.cvtColor(np.array(screenshot), cv2.COLOR_RGB2BGR)
+    img = cv2.cvtColor(np.array(screenshot), cv2.COLOR_RGB2BGR)
+
+    if img.std() > 5 or not (hwnd and IS_WINDOWS):
+        return img
+
+    # 桌面截图疑似空白/被遮挡，退回 PrintWindow 兜底（窗口未真正置顶等极端情况）
+    try:
+        import ctypes
+        import win32gui
+        import win32ui
+        from ctypes import windll
+        import ctypes.wintypes as wintypes
+
+        rect = wintypes.RECT()
+        windll.user32.GetWindowRect(hwnd, ctypes.byref(rect))
+        win_x, win_y = rect.left, rect.top
+        win_w = rect.right - rect.left
+        win_h = rect.bottom - rect.top
+
+        rel_x = x - win_x
+        rel_y = y - win_y
+
+        hwndDC = win32gui.GetWindowDC(hwnd)
+        mfcDC = win32ui.CreateDCFromHandle(hwndDC)
+        saveDC = mfcDC.CreateCompatibleDC()
+        fullBitMap = win32ui.CreateBitmap()
+        fullBitMap.CreateCompatibleBitmap(mfcDC, win_w, win_h)
+        saveDC.SelectObject(fullBitMap)
+        windll.user32.PrintWindow(hwnd, saveDC.GetSafeHdc(), 2)
+
+        bmpstr = fullBitMap.GetBitmapBits(True)
+        img_full = np.frombuffer(bmpstr, dtype=np.uint8)
+        img_full.shape = (win_h, win_w, 4)
+
+        rel_x = max(0, min(rel_x, win_w - w))
+        rel_y = max(0, min(rel_y, win_h - h))
+        crop = img_full[rel_y:rel_y+h, rel_x:rel_x+w]
+        pw_img = cv2.cvtColor(crop, cv2.COLOR_BGRA2BGR)
+
+        win32gui.DeleteObject(fullBitMap.GetHandle())
+        saveDC.DeleteDC()
+        mfcDC.DeleteDC()
+        win32gui.ReleaseDC(hwnd, hwndDC)
+
+        if pw_img.std() > 5:
+            return pw_img
+    except Exception as e:
+        print(f"[ImageRecog] PrintWindow兜底失败: {e}")
+
+    return img
 
 
 def save_match_view(region: tuple[int, int, int, int], hwnd: int, save_path: str):
