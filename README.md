@@ -588,17 +588,19 @@ user32.SetForegroundWindow(foreground_hwnd)       # 想恢复，但两个问题�
 
 两个问题叠加，效果就是：恢复没有生效，最后一个被 `activate_window()` 激活的微信窗口就留在了最前面。
 
-修复（`gui/main_window.py`）：`MainWindow.run()` 里，窗口构造完成、`mainloop()` 之前，主动用跟 `activate_window()` 同款的抢焦点逻辑对自己的窗口抢一次前台：
+最初的修复：`MainWindow.run()` 里，窗口构造完成、`mainloop()` 之前，主动用跟 `activate_window()` 同款的 `AttachThreadInput` 抢焦点逻辑对自己的窗口抢一次前台。**这个版本引入了一个更严重的新 bug**：`AttachThreadInput` 会临时把当前线程的输入队列跟目标线程（通常是刚才被激活的微信线程）接在一起，即使正确 detach，也会让 Windows 内部的焦点/前台追踪状态留下副作用——实测发现，这样抢完前台之后，"选文件夹"/"选文件"按钮点了完全没反应，`tkinter.filedialog.askdirectory`/`askopenfilenames` 弹不出对话框，而且不报错、不抛异常（Windows shell 原生文件选择对话框自己也要走一套前台激活逻辑，被弄脏的线程输入队列状态跟它冲突）。
+
+排查方法：写最小复现脚本——先验证裸 `tkinter.filedialog.askdirectory` 单独调用正常；再验证只 `import window_manager`（触发 win32gui/win32ui 相关代码）不影响对话框；最后验证"先调用 `activate_window(root.winfo_id())` 再点按钮开对话框"——第三步稳定复现"点了没反应"，实锤问题出在 `AttachThreadInput` 这个动作本身，不是 win32 依赖或别的什么原因。
+
+最终修复：改用纯 Tkinter 层面的技巧，不再碰 `AttachThreadInput`：
 
 ```python
-from window_manager import activate_window
-...
 def run(self):
-    try:
-        activate_window(self.root.winfo_id())
-    except Exception:
-        pass
+    self.root.lift()
+    self.root.attributes("-topmost", True)
+    self.root.after(150, lambda: self.root.attributes("-topmost", False))
+    self.root.focus_force()
     self.root.mainloop()
 ```
 
-这个修复还没有实测验证。
+`-topmost` 短暂置顶再取消、`focus_force()` 强制抢焦点，都是 Tk 自己的窗口管理 API，不涉及底层线程输入队列操作，重新验证过不会影响文件选择对话框。这个版本还没有实测验证启动抢焦点本身是否有效（弹出对话框不受影响这点已验证）。

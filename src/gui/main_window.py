@@ -4,8 +4,6 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 from typing import Callable
 
-from window_manager import activate_window
-
 
 class MainWindow:
     def __init__(self, version: str, windows: list[dict],
@@ -788,10 +786,13 @@ class MainWindow:
         # 启动时检测微信窗口（find_wechat_windows）会逐个激活每个微信窗口来截头像判断登录状态，
         # 检测完尝试恢复到"检测前的前台窗口"——但那时程序自己的窗口还没创建，且恢复用的裸
         # SetForegroundWindow 在非前台进程调用时常被 Windows 焦点锁定机制拒绝，实际效果是
-        # 最后一个被激活的微信窗口留在最前面，程序自己的窗口反而在后面。这里创建完窗口后
-        # 主动抢一次前台，用跟 activate_window 一样的 AttachThreadInput 技巧确保抢占成功。
-        try:
-            activate_window(self.root.winfo_id())
-        except Exception:
-            pass
+        # 最后一个被激活的微信窗口留在最前面，程序自己的窗口反而在后面。
+        # 这里创建完窗口后主动抢一次前台——之前试过用跟 activate_window 一样的 AttachThreadInput
+        # 技巧，实测会把原生文件选择对话框（askdirectory/askopenfilenames）搞坏，点"选文件夹"/
+        # "选文件"按钮弹不出对话框且不报错（AttachThreadInput 改了线程的输入队列状态，跟 Windows
+        # shell 原生对话框的前台激活逻辑冲突）。改用纯 Tk 层面的 topmost 技巧，不碰 win32 底层。
+        self.root.lift()
+        self.root.attributes("-topmost", True)
+        self.root.after(150, lambda: self.root.attributes("-topmost", False))
+        self.root.focus_force()
         self.root.mainloop()
