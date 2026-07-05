@@ -28,6 +28,9 @@ dist/
 test_retry.py
 printwindow_capture.png
 
+# 运行时日志：程序每次跑自动生成，纯运行噪音，不进仓库（logger.py 会自建 logs/ 目录）
+logs/
+
 # 从网上下载的真实测试图（第三方版权图片，不是项目自己生成的素材，不提交）
 test_images_real/
 
