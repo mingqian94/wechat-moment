@@ -17,6 +17,10 @@ base64 编码后一条广播发过去原样输入——emoji、换行、排版�
   - "朋友圈素材"文件夹在相册列表里的位置写死了比例坐标（取决于设备有多少相册），
     稳健做法是截图 OCR/模板匹配定位该文件夹项
   - 多图目前只支持一行 3 张，超过要处理换行/滚动
+
+坐标不再是模块级全局常量——手机型号/分辨率不统一（客户 20 台机型不一样），必须按
+机型取用各自的 Profile（见 device_profile.py）。DEFAULT_PROFILE 是 2026-07-05 在
+小米15 上实测跑通的那份，没传 profile 参数时用它兜底（方便单测/没有 Profile 库时用）。
 """
 import base64
 import random
@@ -24,21 +28,21 @@ import time
 from dataclasses import dataclass
 
 
-# ── 发圈流程各步骤的比例坐标（实测值，UI 不变则跨分辨率通用）──────────
-COORDS = {
-    "discover_tab":     (0.620, 0.950),  # 底部"发现"tab（从微信首页进入时用）
-    "moments_camera":   (0.929, 0.080),  # 朋友圈页右上角相机图标
-    "menu_from_album":  (0.498, 0.885),  # 弹出菜单"从手机相册选择"
-    "album_dropdown":   (0.498, 0.079),  # 相册顶部"图片和视频 ∨"下拉
-    "folder_item":      (0.300, 0.452),  # "朋友圈素材"文件夹项（位置不稳，见 TODO）
-    "album_done":       (0.866, 0.959),  # 相册"完成"按钮
-    "caption_input":    (0.222, 0.145),  # 发表页"这一刻的想法..."文案框
-    "post_button":      (0.893, 0.079),  # 发表页右上角"发表"绿色按钮
+# 兜底 Profile：小米15 (1200x2670, HyperOS2) 实测跑通的坐标，没传 profile 时使用
+DEFAULT_PROFILE = {
+    "coords": {
+        "discover_tab":     (0.620, 0.950),
+        "moments_camera":   (0.929, 0.080),
+        "menu_from_album":  (0.498, 0.885),
+        "album_dropdown":   (0.498, 0.079),
+        "folder_item":      (0.300, 0.452),
+        "album_done":       (0.866, 0.959),
+        "caption_input":    (0.222, 0.145),
+        "post_button":      (0.893, 0.079),
+    },
+    "image_check_row_ry": 0.127,
+    "image_check_col_rx": [0.200, 0.451, 0.703],
 }
-
-# 文件夹内图片选择圈的比例坐标：同一行 ry 固定，每列 rx 不同（3 列布局）
-IMAGE_CHECK_ROW_RY = 0.127
-IMAGE_CHECK_COL_RX = [0.200, 0.451, 0.703]  # 第 1/2/3 列
 
 ADBKEYBOARD_IME = "com.android.adbkeyboard/.AdbIME"
 
@@ -69,19 +73,26 @@ def _type_unicode(adb, text: str):
 
 
 def publish_moment(adb, image_count: int, caption: str = "",
-                   restore_ime: str | None = None) -> PublishResult:
+                   restore_ime: str | None = None, profile: dict | None = None) -> PublishResult:
     """
     在已在朋友圈页的设备上发一条朋友圈（多图 + 中文文案）。
     adb: adb.Adb 实例
     image_count: 要选的图片数量（图片须已 push 到"朋友圈素材"文件夹，按文件名排序）
     caption: 文案（支持中文/emoji/换行；需设备已装 ADBKeyboard）
     restore_ime: 发完把输入法切回的 id（如搜狗），None 则不切回
+    profile: 该设备机型的坐标 Profile（device_profile.get_profile 的返回值）；
+             None 时用 DEFAULT_PROFILE 兜底（仅小米15 验证过，其他机型必须传 profile）
 
     前置：调用方已确保在朋友圈页。返回 PublishResult。
     （失败检测/重试复用 PC 版 scheduler 思路，串多设备调度时在外层做。）
     """
+    profile = profile or DEFAULT_PROFILE
+    coords = profile["coords"]
+    check_row_ry = profile["image_check_row_ry"]
+    check_col_rx = profile["image_check_col_rx"]
+
     def tap(name: str):
-        rx, ry = COORDS[name]
+        rx, ry = coords[name]
         adb.tap_ratio(rx, ry)
         _sleep(STEP_WAIT)
 
@@ -96,9 +107,9 @@ def publish_moment(adb, image_count: int, caption: str = "",
         tap("folder_item")
 
         # Step 6.2: 按顺序勾选前 image_count 张（点击顺序即图片排序）
-        n = max(1, min(image_count, len(IMAGE_CHECK_COL_RX)))  # 目前一行 3 张，多图需扩展
+        n = max(1, min(image_count, len(check_col_rx)))  # 目前一行 3 张，多图需扩展
         for i in range(n):
-            adb.tap_ratio(IMAGE_CHECK_COL_RX[i], IMAGE_CHECK_ROW_RY)
+            adb.tap_ratio(check_col_rx[i], check_row_ry)
             _sleep(PICK_WAIT)
         _sleep(STEP_WAIT)
 

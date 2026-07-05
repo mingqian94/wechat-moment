@@ -13,6 +13,10 @@ import subprocess
 import time
 from pathlib import Path
 
+# 朋友圈素材专用文件夹：推到这里的图/视频会被微信相册识别成独立相簿
+# "朋友圈素材"，图片位置固定，是自动化选图可复现的关键（2026-07-02 实测确认）。
+MOMENTS_FOLDER = "/sdcard/Pictures/朋友圈素材"
+
 
 class AdbError(Exception):
     pass

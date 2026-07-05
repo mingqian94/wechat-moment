@@ -38,3 +38,6 @@ test_images_real/
 phone/platform-tools/
 phone/**/logs/
 phone/**/错误截图/
+# 运行时坐标 Profile 库（内置种子在 device_profile.py 里，这个是运行时落盘的可写副本）
+phone/device_profiles.json
+phone/activation.dat
