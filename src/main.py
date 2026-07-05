@@ -34,7 +34,6 @@ from publisher import execute_publish
 from scheduler import Scheduler
 from gui.activation import ActivationWindow
 from gui.main_window import MainWindow
-from gui.add_task import AddTaskDialog
 
 
 class App:
@@ -63,7 +62,6 @@ class App:
         self.main_win = MainWindow(
             version=self.version,
             windows=self.windows,
-            on_add_task=self._on_add_task,
             on_start=self._on_start,
             on_stop=self._on_stop,
             on_retry=self._on_retry,
@@ -72,13 +70,6 @@ class App:
         for w in self.windows:
             self.main_win.log(f"  {w['alias']} — HWND: {w['hwnd']} — {w['title']}")
         self.main_win.run()
-
-    def _on_add_task(self, aliases: list[str]):
-        AddTaskDialog(
-            parent=self.main_win.root,
-            account_aliases=aliases,
-            on_confirm=self.main_win.add_task,
-        )
 
     def _on_start(self):
         tasks = self.main_win.tasks

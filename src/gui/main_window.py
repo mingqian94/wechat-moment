@@ -7,13 +7,11 @@ from typing import Callable
 
 class MainWindow:
     def __init__(self, version: str, windows: list[dict],
-                 on_add_task: Callable,
                  on_start: Callable,
                  on_stop: Callable,
                  on_retry: Callable | None = None):
         self.version = version
         self.windows = windows
-        self.on_add_task = on_add_task
         self.on_start = on_start
         self.on_stop = on_stop
         self.on_retry = on_retry
@@ -553,13 +551,6 @@ class MainWindow:
         self._refresh_account_checkboxes()
 
     # ── 任务操作 ──────────────────────────────────────────
-    def _add_task(self):
-        self._show_add_panel()
-
-    def add_task(self, tasks: list[dict]):
-        self.tasks.extend(tasks)
-        self._refresh_tree()
-
     def _on_tree_motion(self, event):
         item = self.tree.identify_row(event.y)
         col = self.tree.identify_column(event.x)
