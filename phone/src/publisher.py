@@ -19,6 +19,7 @@ base64 编码后一条广播发过去原样输入——emoji、换行、排版�
   - 多图目前只支持一行 3 张，超过要处理换行/滚动
 """
 import base64
+import random
 import time
 from dataclasses import dataclass
 
@@ -41,7 +42,17 @@ IMAGE_CHECK_COL_RX = [0.200, 0.451, 0.703]  # 第 1/2/3 列
 
 ADBKEYBOARD_IME = "com.android.adbkeyboard/.AdbIME"
 
-STEP_WAIT = 2.0
+# 各步骤等待都用随机区间，不用固定整数秒——固定节奏本身就是机器特征（跟 PC 版一个教训）。
+# 步骤间常规停顿
+STEP_WAIT = (1.6, 3.4)
+# 选图时每张之间的小停顿
+PICK_WAIT = (0.4, 0.9)
+# 发表前的"看一眼再发"停顿——关键的对外动作，模拟真人确认，故意给足且随机
+REVIEW_WAIT = (2.8, 5.6)
+
+
+def _sleep(rng: tuple[float, float]):
+    time.sleep(random.uniform(*rng))
 
 
 @dataclass
@@ -72,7 +83,7 @@ def publish_moment(adb, image_count: int, caption: str = "",
     def tap(name: str):
         rx, ry = COORDS[name]
         adb.tap_ratio(rx, ry)
-        time.sleep(STEP_WAIT)
+        _sleep(STEP_WAIT)
 
     prev_ime = None
     try:
@@ -88,8 +99,8 @@ def publish_moment(adb, image_count: int, caption: str = "",
         n = max(1, min(image_count, len(IMAGE_CHECK_COL_RX)))  # 目前一行 3 张，多图需扩展
         for i in range(n):
             adb.tap_ratio(IMAGE_CHECK_COL_RX[i], IMAGE_CHECK_ROW_RY)
-            time.sleep(0.6)
-        time.sleep(0.8)
+            _sleep(PICK_WAIT)
+        _sleep(STEP_WAIT)
 
         # Step 6.3: 完成
         tap("album_done")
@@ -99,14 +110,15 @@ def publish_moment(adb, image_count: int, caption: str = "",
             prev_ime = adb.shell("settings get secure default_input_method").strip()
             adb.shell(f"ime enable {ADBKEYBOARD_IME}")
             adb.shell(f"ime set {ADBKEYBOARD_IME}")
-            time.sleep(0.6)
+            _sleep(PICK_WAIT)
             tap("caption_input")
             _type_unicode(adb, caption)
-            time.sleep(1.5)
+            _sleep(STEP_WAIT)  # 打完字停顿，像真人写完看一眼
 
-        # Step 7.2: 发表
+        # Step 7.2: 发表前"看一眼再发"，关键对外动作故意慢下来避免机器节奏
+        _sleep(REVIEW_WAIT)
         tap("post_button")
-        time.sleep(2.0)
+        _sleep(STEP_WAIT)
 
         return PublishResult(True)
     except Exception as e:
