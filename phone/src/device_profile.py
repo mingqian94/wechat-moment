@@ -17,13 +17,17 @@ from pathlib import Path
 _APP_DIR = Path(sys.executable).parent if getattr(sys, "frozen", False) else Path(__file__).parent.parent
 PROFILE_FILE = _APP_DIR / "device_profiles.json"
 
-# 2026-07-05 在小米15 (1200x2670, HyperOS2) 上实测跑通的坐标，作为内置种子 Profile，
-# 装好就能用；其他机型需要标定后追加。
+# 2026-07-05/06 在小米15 (1200x2670, HyperOS2) 上实测跑通的坐标，作为内置种子 Profile，
+# 只对这一个机型有效——不同机型分辨率/UI布局不统一，坐标不能跨机型套用，新机型接入前
+# 必须照 README「新增机型标定」的流程各自标定一遍，不能假设这份坐标通用。
+# moments_entry（微信首页"发现"→"朋友圈"入口）是 2026-07-06 新标定的，同样只对本机型有效；
+# 缺这个键的机型，publisher.py 会跳过自动导航，要求设备已停在朋友圈页（不会瞎猜坐标去点）。
 SEED_PROFILES = {
     "24129PN74C": {  # 小米15 的 ro.product.model
         "display_name": "小米15",
         "coords": {
             "discover_tab":     [0.620, 0.950],
+            "moments_entry":    [0.204, 0.1375],
             "moments_camera":   [0.929, 0.080],
             "menu_from_album":  [0.498, 0.885],
             "album_dropdown":   [0.498, 0.079],

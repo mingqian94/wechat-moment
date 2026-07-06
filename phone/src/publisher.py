@@ -73,18 +73,22 @@ def _type_unicode(adb, text: str):
 
 
 def publish_moment(adb, image_count: int, caption: str = "",
-                   restore_ime: str | None = None, profile: dict | None = None) -> PublishResult:
+                   restore_ime: str | None = None, profile: dict | None = None,
+                   start_from_wechat_home: bool = False) -> PublishResult:
     """
-    在已在朋友圈页的设备上发一条朋友圈（多图 + 中文文案）。
+    发一条朋友圈（多图 + 中文文案）。
     adb: adb.Adb 实例
     image_count: 要选的图片数量（图片须已 push 到"朋友圈素材"文件夹，按文件名排序）
     caption: 文案（支持中文/emoji/换行；需设备已装 ADBKeyboard）
     restore_ime: 发完把输入法切回的 id（如搜狗），None 则不切回
     profile: 该设备机型的坐标 Profile（device_profile.get_profile 的返回值）；
-             None 时用 DEFAULT_PROFILE 兜底（仅小米15 验证过，其他机型必须传 profile）
+             None 时用 DEFAULT_PROFILE 兜底（仅小米15 验证过，其他机型必须传各自 profile）
+    start_from_wechat_home: True 时先从微信首页导航到朋友圈页（需要 profile["coords"] 里有
+             discover_tab + moments_entry 这两个坐标——这两个坐标**按机型各自标定**，不是
+             通用值；没标定的机型传 True 会直接返回失败，不会瞎猜坐标去点）。
+             默认 False：假定设备已经停在朋友圈页（当前调度流程的实际用法）。
 
-    前置：调用方已确保在朋友圈页。返回 PublishResult。
-    （失败检测/重试复用 PC 版 scheduler 思路，串多设备调度时在外层做。）
+    返回 PublishResult。（失败检测/重试复用 PC 版 scheduler 思路，串多设备调度时在外层做。）
     """
     profile = profile or DEFAULT_PROFILE
     coords = profile["coords"]
@@ -99,6 +103,13 @@ def publish_moment(adb, image_count: int, caption: str = "",
     prev_ime = None
     try:
         adb.ensure_online()
+
+        if start_from_wechat_home:
+            if "discover_tab" not in coords or "moments_entry" not in coords:
+                return PublishResult(False, "该机型未标定微信首页→朋友圈的导航坐标，无法自动导航"
+                                             "（需要先按 README「新增机型标定」流程标定 discover_tab/moments_entry）")
+            tap("discover_tab")
+            tap("moments_entry")
 
         # Step 4: 相机 → 5: 从相册选择 → 6: 切"朋友圈素材"文件夹
         tap("moments_camera")
