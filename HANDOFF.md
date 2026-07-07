@@ -55,9 +55,11 @@
 - PC 版：Python 3.12，`pip install -r requirements.txt`（Windows 跑真实发布，Mac 只能
   跑 mock）。打包用 `build_exe.spec`（PyInstaller，onedir 模式）。
 - 手机版：Python 3.12，`pip install -r phone/requirements.txt`。另需 Google 官方
-  `platform-tools`（adb），仓库里没带（体积大），单独下载配置 `WM_ADB_PATH` 环境变量
-  或放到 `phone/platform-tools/`。手机端一次性配置见"手机配置清单.md"（开发者选项、
-  ADBKeyboard 输入法等，MIUI 上有几个必须踩的坑）。
+  `platform-tools`（adb），仓库里没带（体积大，`.gitignore` 已排除），但**这台开发机
+  本地已经放好了**：`phone/platform-tools/adb.exe`——`main.py` 的 `_find_adb_path()`
+  会自动找这个路径，不用配 `WM_ADB_PATH` 环境变量。换新机器开发才需要重新下载。
+  手机端一次性配置见"手机配置清单.md"（开发者选项、ADBKeyboard 输入法等，MIUI 上
+  有几个必须踩的坑）。
 - 两个程序共用同一套注册码算法（同私钥），但各自独立的 `activation.dat`，本地测试
   设 `WM_DEBUG=1` 跳过激活。
 
