@@ -74,7 +74,8 @@ def _type_unicode(adb, text: str):
 
 def publish_moment(adb, image_count: int, caption: str = "",
                    restore_ime: str | None = None, profile: dict | None = None,
-                   start_from_wechat_home: bool = False) -> PublishResult:
+                   start_from_wechat_home: bool = False,
+                   on_step=None) -> PublishResult:
     """
     发一条朋友圈（多图 + 中文文案）。
     adb: adb.Adb 实例
@@ -87,6 +88,8 @@ def publish_moment(adb, image_count: int, caption: str = "",
              discover_tab + moments_entry 这两个坐标——这两个坐标**按机型各自标定**，不是
              通用值；没标定的机型传 True 会直接返回失败，不会瞎猜坐标去点）。
              默认 False：假定设备已经停在朋友圈页（当前调度流程的实际用法）。
+    on_step: 可选回调 on_step(str)，每完成一个可辨认的步骤就调用一次，用于把发布过程
+             逐步打进运行日志（"点击相机"、"选择素材"……），而不是只有最终成功/失败一行。
 
     返回 PublishResult。（失败检测/重试复用 PC 版 scheduler 思路，串多设备调度时在外层做。）
     """
@@ -95,9 +98,15 @@ def publish_moment(adb, image_count: int, caption: str = "",
     check_row_ry = profile["image_check_row_ry"]
     check_col_rx = profile["image_check_col_rx"]
 
-    def tap(name: str):
+    def _step(msg: str):
+        if on_step:
+            on_step(msg)
+
+    def tap(name: str, step_msg: str | None = None):
         rx, ry = coords[name]
         adb.tap_ratio(rx, ry)
+        if step_msg:
+            _step(step_msg)
         _sleep(STEP_WAIT)
 
     prev_ime = None
@@ -108,24 +117,25 @@ def publish_moment(adb, image_count: int, caption: str = "",
             if "discover_tab" not in coords or "moments_entry" not in coords:
                 return PublishResult(False, "该机型未标定微信首页→朋友圈的导航坐标，无法自动导航"
                                              "（需要先按 README「新增机型标定」流程标定 discover_tab/moments_entry）")
-            tap("discover_tab")
-            tap("moments_entry")
+            tap("discover_tab", "打开微信「发现」")
+            tap("moments_entry", "进入朋友圈")
 
         # Step 4: 相机 → 5: 从相册选择 → 6: 切"朋友圈素材"文件夹
-        tap("moments_camera")
-        tap("menu_from_album")
-        tap("album_dropdown")
-        tap("folder_item")
+        tap("moments_camera", "点击相机图标")
+        tap("menu_from_album", "选择「从手机相册选择」")
+        tap("album_dropdown", "打开相册文件夹列表")
+        tap("folder_item", "切换到「朋友圈素材」文件夹")
 
         # Step 6.2: 按顺序勾选前 image_count 张（点击顺序即图片排序）
         n = max(1, min(image_count, len(check_col_rx)))  # 目前一行 3 张，多图需扩展
         for i in range(n):
             adb.tap_ratio(check_col_rx[i], check_row_ry)
             _sleep(PICK_WAIT)
+        _step(f"已选择 {n} 张素材")
         _sleep(STEP_WAIT)
 
         # Step 6.3: 完成
-        tap("album_done")
+        tap("album_done", "确认选图")
 
         # Step 7: 中文文案（切到 ADBKeyboard → 输入）
         if caption:
@@ -135,11 +145,12 @@ def publish_moment(adb, image_count: int, caption: str = "",
             _sleep(PICK_WAIT)
             tap("caption_input")
             _type_unicode(adb, caption)
+            _step("输入文案")
             _sleep(STEP_WAIT)  # 打完字停顿，像真人写完看一眼
 
         # Step 7.2: 发表前"看一眼再发"，关键对外动作故意慢下来避免机器节奏
         _sleep(REVIEW_WAIT)
-        tap("post_button")
+        tap("post_button", "点击发表")
         _sleep(STEP_WAIT)
 
         return PublishResult(True)

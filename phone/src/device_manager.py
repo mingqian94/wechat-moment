@@ -1,28 +1,37 @@
 """
-设备管理 —— 发现在线手机、识别机型、分配别名、绑定坐标 Profile。
+设备管理 —— 发现全部"已知设备"（含离线的），识别在线机型，绑定坐标 Profile。
 
-类比 PC 版 window_manager.find_wechat_windows()：程序启动时扫一遍，得到一份
-带别名、带 Profile 的设备列表，交给上层（GUI/scheduler）使用。
+跟单纯"扫一遍 adb devices"的区别：设备列表显示的是**所有添加/配对过的手机**，不管
+当前在不在线——20 台手机不可能一直全部在线，用户需要一直能看到"我有哪些设备"，
+而不是一台暂时没插线/没连网就从列表里消失、下次还得重新走一遍添加流程。
 """
 import subprocess
 from dataclasses import dataclass, field
 
 from adb import Adb
 import device_profile
+import device_registry
 
 
 @dataclass
 class Device:
-    serial: str          # adb 设备号（USB 或 ip:port）
-    model: str            # ro.product.model
-    alias: str = ""       # 手机-01 / 手机-02 ...
+    serial: str             # adb 连接串（USB 序列号或 ip:port）；离线时为空字符串
+    hw_serial: str          # ro.serialno，硬件序列号，跨连接方式稳定，设备身份靠它认
+    model: str              # ro.product.model（离线设备用最后一次已知的机型）
+    alias: str = ""         # 手机-01 / 手机-02 ...（或用户自定义备注名）
     profile: dict | None = None   # 该机型的坐标 Profile，None 表示未标定
     adb: Adb | None = None
+    online: bool = True
 
     @property
     def ready(self) -> bool:
-        """能不能直接拿来发布：在线 + 有 Profile。"""
-        return self.profile is not None
+        """能不能立即拿去发布：在线 + 该机型已标定坐标。"""
+        return self.online and self.profile is not None
+
+    def rename(self, new_alias: str):
+        """改备注名并持久化到已知设备清单（按硬件序列号存，重连/换端口/离线后依然认得）。"""
+        self.alias = new_alias
+        device_registry.upsert(self.hw_serial, alias=new_alias)
 
 
 def _list_serials(adb_path: str) -> list[str]:
@@ -41,28 +50,73 @@ def _list_serials(adb_path: str) -> list[str]:
 
 
 def discover_devices(adb_path: str) -> list[Device]:
-    """扫描所有在线设备，识别机型，查 Profile，分配别名。"""
+    """扫描全部已知设备。在线的：现查机型 + Profile，同时把最新信息记进已知清单；
+    已知清单里这次没扫到在线的：用清单里最后一次记录的机型/别名展示，标记离线。"""
+    known = {kd.hw_serial: kd for kd in device_registry.list_known()}
+    seen_hw = set()
     devices = []
-    for i, serial in enumerate(_list_serials(adb_path)):
+
+    # 已知清单里已用过的别名，用来给全新设备分配不重复的默认序号
+    used_defaults = {kd.alias for kd in known.values()}
+    next_idx = 1
+
+    def _next_default_alias():
+        nonlocal next_idx
+        while f"手机-{next_idx:02d}" in used_defaults:
+            next_idx += 1
+        alias = f"手机-{next_idx:02d}"
+        used_defaults.add(alias)
+        next_idx += 1
+        return alias
+
+    for serial in _list_serials(adb_path):
         adb = Adb(adb_path, serial)
         try:
             model = adb.shell("getprop ro.product.model").strip()
         except Exception:
             model = "未知机型"
-        profile = device_profile.get_profile(model)
+        try:
+            hw_serial = adb.shell("getprop ro.serialno").strip()
+        except Exception:
+            hw_serial = serial  # 取不到硬件序列号时退化用连接串（离线后可能认不出，不影响本次使用）
+
+        kd = known.get(hw_serial)
+        alias = kd.alias if (kd and kd.alias) else _next_default_alias()
+        device_registry.upsert(hw_serial, alias=alias, model=model, last_seen_addr=serial)
+        seen_hw.add(hw_serial)
+
         devices.append(Device(
             serial=serial,
+            hw_serial=hw_serial,
             model=model,
-            alias=f"手机-{i+1:02d}",
-            profile=profile,
+            alias=alias,
+            profile=device_profile.get_profile(model),
             adb=adb,
+            online=True,
         ))
+
+    for hw_serial, kd in known.items():
+        if hw_serial in seen_hw:
+            continue
+        devices.append(Device(
+            serial="",
+            hw_serial=hw_serial,
+            model=kd.model or "未知机型",
+            alias=kd.alias,
+            profile=device_profile.get_profile(kd.model) if kd.model else None,
+            adb=None,
+            online=False,
+        ))
+
     return devices
 
 
 def summarize(devices: list[Device]) -> str:
     lines = []
     for d in devices:
-        status = "就绪" if d.ready else "⚠ 该机型未标定坐标"
-        lines.append(f"  {d.alias} — {d.model} ({d.serial}) — {status}")
-    return "\n".join(lines) if lines else "  （未检测到在线设备）"
+        if not d.online:
+            status = "离线"
+        else:
+            status = "就绪" if d.ready else "⚠ 该机型未标定坐标"
+        lines.append(f"  {d.alias} — {d.model} ({d.serial or '离线'}) — {status}")
+    return "\n".join(lines) if lines else "  （未检测到任何设备，先用「添加设备」接入）"

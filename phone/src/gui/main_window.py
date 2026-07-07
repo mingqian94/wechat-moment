@@ -16,13 +16,19 @@ class MainWindow:
                  on_start: Callable,
                  on_stop: Callable,
                  on_retry: Callable | None = None,
-                 on_diagnose: Callable | None = None):
+                 on_diagnose: Callable | None = None,
+                 on_rename: Callable | None = None,
+                 on_rescan: Callable | None = None,
+                 on_add_device: Callable | None = None):
         self.version = version
         self.devices = devices  # list[device_manager.Device]
         self.on_start = on_start
         self.on_stop = on_stop
         self.on_retry = on_retry
         self.on_diagnose = on_diagnose
+        self.on_rename = on_rename
+        self.on_rescan = on_rescan
+        self.on_add_device = on_add_device
 
         self.tasks: list[dict] = []
         self._is_running = False
@@ -31,7 +37,7 @@ class MainWindow:
         self.selected_media: list[str] = []
 
         self.root = tk.Tk()
-        self.root.title("朋友圈发布助手 · 手机版")
+        self.root.title("朋友圈发布助手 · 操作手机版")
         self.root.minsize(900, 680)
         self._center(960, 720)
         self._build()
@@ -56,12 +62,16 @@ class MainWindow:
         top = tk.Frame(root, bg="#4a7c59", height=56)
         top.pack(fill="x")
         top.pack_propagate(False)
-        tk.Label(top, text="朋友圈发布助手 · 手机版",
+        tk.Label(top, text="朋友圈发布助手 · 操作手机版",
                  font=("", 15, "bold"), fg="white", bg="#4a7c59").pack(side="left", padx=(16, 20), pady=14)
 
         # ── 设备状态 ──────────────────────────────────────
         dev_frame = tk.LabelFrame(root, text="手机设备", bg="#f5f5f5", font=("", 10))
         dev_frame.pack(fill="x", padx=16, pady=(10, 0))
+        dev_btn_row = tk.Frame(dev_frame, bg="#f5f5f5")
+        dev_btn_row.pack(fill="x", padx=8, pady=(4, 0))
+        ttk.Button(dev_btn_row, text="🔄 重新扫描", command=self._rescan_devices).pack(side="left", padx=(0, 4))
+        ttk.Button(dev_btn_row, text="➕ 添加设备", command=self._add_device_dialog).pack(side="left")
         self.dev_frame_inner = tk.Frame(dev_frame, bg="#f5f5f5")
         self.dev_frame_inner.pack(fill="x", padx=8, pady=6)
         self._refresh_devices()
@@ -73,20 +83,18 @@ class MainWindow:
         left_frame = tk.Frame(self.main_paned, bg="#f5f5f5")
         self.main_paned.add(left_frame, minsize=160)
 
-        task_hdr = tk.Frame(left_frame, bg="#f5f5f5")
-        task_hdr.pack(fill="x", pady=(0, 2))
-        tk.Label(task_hdr, text="今日任务", font=("", 10, "bold"), bg="#f5f5f5").pack(side="left")
-        self.progress_var = tk.StringVar(value="0 / 0")
-        tk.Label(task_hdr, textvariable=self.progress_var, font=("", 9), bg="#f5f5f5", fg="#888").pack(side="left", padx=(8, 0))
-        self.delete_btn = ttk.Button(task_hdr, text="删除", command=self._delete_selected, state="disabled")
-        self.delete_btn.pack(side="right", padx=(4, 0))
-
+        # 任务标题/进度 + 全部操作按钮放同一行
         ctrl_frame = tk.Frame(left_frame, bg="#f5f5f5")
         ctrl_frame.pack(fill="x", pady=4)
+        tk.Label(ctrl_frame, text="今日任务", font=("", 10, "bold"), bg="#f5f5f5").pack(side="left")
+        self.progress_var = tk.StringVar(value="0 / 0")
+        tk.Label(ctrl_frame, textvariable=self.progress_var, font=("", 9), bg="#f5f5f5", fg="#888").pack(side="left", padx=(8, 14))
         ttk.Button(ctrl_frame, text="＋ 添加任务", command=self._toggle_add_panel).pack(side="left", padx=(0, 6))
-        ttk.Button(ctrl_frame, text="⚡ 手动发送", command=self._manual_send).pack(side="left", padx=(0, 4))
+        ttk.Button(ctrl_frame, text="⚡ 再发一次", command=self._manual_send).pack(side="left", padx=(0, 4))
         ttk.Button(ctrl_frame, text="⏹ 全部停止", command=self._stop).pack(side="left", padx=4)
         ttk.Button(ctrl_frame, text="🔧 设备自检", command=self._diagnose_selected).pack(side="left", padx=4)
+        self.delete_btn = ttk.Button(ctrl_frame, text="删除", command=self._delete_selected, state="disabled")
+        self.delete_btn.pack(side="right", padx=(4, 0))
 
         self.running_warn_var = tk.StringVar(value="⚠ 发布过程中请勿操作手机（程序将自动操作微信）")
         tk.Label(left_frame, textvariable=self.running_warn_var, font=("", 9),
@@ -134,7 +142,8 @@ class MainWindow:
         tk.Label(panel, text="添加任务", font=("", 12, "bold"), bg="#f5f5f5").pack(pady=(10, 4))
 
         row_label("素材")
-        self.media_label = tk.Label(panel, text="未选择", bg="#f5f5f5", fg="#888", anchor="w")
+        self.media_label = tk.Label(panel, text="未选择", bg="#f5f5f5", fg="#888",
+                                     anchor="w", justify="left")
         self.media_label.pack(fill="x", padx=pad_x)
         btn_frame = tk.Frame(panel, bg="#f5f5f5")
         btn_frame.pack(fill="x", padx=pad_x, pady=(2, 0))
@@ -167,30 +176,134 @@ class MainWindow:
         ttk.Button(btn_row, text="取  消", width=10, command=self._hide_add_panel).pack(side="left", padx=6)
 
     # ── 设备显示 ──────────────────────────────────────────
+    def set_devices(self, devices: list):
+        """重新扫描/添加设备后，App 层调用这个方法把最新设备列表刷进界面。"""
+        self.devices = devices
+        self._refresh_devices()
+        self._refresh_device_checkboxes()
+
+    def _rescan_devices(self):
+        if self.on_rescan:
+            self.on_rescan()
+        else:
+            self.log("未接入重新扫描逻辑")
+
+    def _add_device_dialog(self):
+        win = tk.Toplevel(self.root)
+        win.title("添加设备")
+        win.configure(bg="#f5f5f5")
+        win.resizable(False, False)
+        pad = {"padx": 16, "pady": (8, 2)}
+
+        tk.Label(win, text="设备别名（比如「手机-张三」，存到本地，下次重连自动记得）",
+                 font=("", 9), bg="#f5f5f5", anchor="w").pack(fill="x", **pad)
+        alias_var = tk.StringVar()
+        ttk.Entry(win, textvariable=alias_var, width=32).pack(padx=16, fill="x")
+
+        tk.Label(win, text="连接地址（ip:port，无线调试页面显示的连接端口）",
+                 font=("", 9), bg="#f5f5f5", anchor="w").pack(fill="x", **pad)
+        connect_var = tk.StringVar()
+        ttk.Entry(win, textvariable=connect_var, width=32).pack(padx=16, fill="x")
+
+        # 用勾选框代替让用户自己判断"算不算配对过"——不确定就先不勾直接试连接，
+        # 连接失败了日志里会提示回来勾这个再填配对信息，不用用户自己猜状态
+        need_pair_var = tk.BooleanVar(value=False)
+        pair_fields_frame = tk.Frame(win, bg="#f5f5f5")
+        pair_addr_var = tk.StringVar()
+        pair_code_var = tk.StringVar()
+
+        def _toggle_pair_fields():
+            if need_pair_var.get():
+                pair_fields_frame.pack(fill="x", after=need_pair_chk)
+            else:
+                pair_fields_frame.pack_forget()
+
+        need_pair_chk = ttk.Checkbutton(win, text="这是首次接入的新设备（需要配对）",
+                                        variable=need_pair_var, command=_toggle_pair_fields)
+        need_pair_chk.pack(fill="x", padx=16, pady=(10, 0))
+
+        tk.Label(pair_fields_frame, text="配对地址（ip:port，配对码旁边显示的，跟连接地址不是同一个）",
+                 font=("", 9), bg="#f5f5f5", anchor="w").pack(fill="x", **pad)
+        ttk.Entry(pair_fields_frame, textvariable=pair_addr_var, width=32).pack(padx=16, fill="x")
+        tk.Label(pair_fields_frame, text="配对码", font=("", 9), bg="#f5f5f5", anchor="w").pack(fill="x", **pad)
+        ttk.Entry(pair_fields_frame, textvariable=pair_code_var, width=32).pack(padx=16, fill="x")
+
+        def _confirm():
+            connect_addr = connect_var.get().strip()
+            if not connect_addr:
+                messagebox.showwarning("提示", "请填写连接地址", parent=win)
+                return
+            alias = alias_var.get().strip()
+            if need_pair_var.get():
+                pair_addr = pair_addr_var.get().strip()
+                pair_code = pair_code_var.get().strip()
+            else:
+                pair_addr = pair_code = ""  # 没勾选就当没填，忽略输入框里任何残留内容
+            win.destroy()
+            if self.on_add_device:
+                self.on_add_device(connect_addr, pair_addr or None, pair_code or None, alias or None)
+
+        btn_row = tk.Frame(win, bg="#f5f5f5")
+        btn_row.pack(pady=12)
+        ttk.Button(btn_row, text="确  定", width=10, command=_confirm).pack(side="left", padx=6)
+        ttk.Button(btn_row, text="取  消", width=10, command=win.destroy).pack(side="left", padx=6)
+
+    def _rename_device(self, dev):
+        from tkinter import simpledialog
+        new_alias = simpledialog.askstring("改备注", f"给 {dev.model} 起个备注名：",
+                                            initialvalue=dev.alias, parent=self.root)
+        if not new_alias or not new_alias.strip():
+            return
+        new_alias = new_alias.strip()
+        if self.on_rename:
+            self.on_rename(dev, new_alias)
+        else:
+            dev.rename(new_alias)
+        self._refresh_devices()
+        self._refresh_device_checkboxes()
+        self.log(f"设备备注已改为：{new_alias}")
+
     def _refresh_devices(self):
         for w in self.dev_frame_inner.winfo_children():
             w.destroy()
         if not self.devices:
-            tk.Label(self.dev_frame_inner, text="（未检测到在线设备）", bg="#f5f5f5", fg="#888").pack(side="left")
+            tk.Label(self.dev_frame_inner, text="（还没有设备，点「添加设备」接入第一台）",
+                     bg="#f5f5f5", fg="#888").pack(side="left")
             return
         for d in self.devices:
-            ready = d.profile is not None
-            color = "#2e7d32" if ready else "#c0392b"
-            status = "就绪" if ready else "未标定坐标"
+            if not d.online:
+                color = "#999"
+                status = "离线"
+            elif d.ready:
+                color = "#2e7d32"
+                status = "就绪"
+            else:
+                color = "#c0392b"
+                status = "未标定坐标"
             f = tk.Frame(self.dev_frame_inner, bg="#f5f5f5")
             f.pack(side="left", padx=8)
-            tk.Label(f, text=d.alias, font=("", 9, "bold"), bg="#f5f5f5").pack()
+            alias_label = tk.Label(f, text=d.alias, font=("", 9, "bold"), bg="#f5f5f5", cursor="hand2",
+                                   fg=("#999" if not d.online else "#000"))
+            alias_label.pack()
+            alias_label.bind("<Double-Button-1>", lambda e, dev=d: self._rename_device(dev))
             tk.Label(f, text=d.model, font=("", 8), bg="#f5f5f5", fg="#666").pack()
             tk.Label(f, text=status, font=("", 8), bg="#f5f5f5", fg=color).pack()
+            tk.Label(f, text="双击改备注", font=("", 7), bg="#f5f5f5", fg="#aaa").pack()
 
     def _refresh_device_checkboxes(self):
         for w in self.dev_select_frame.winfo_children():
             w.destroy()
+        # key 用 hw_serial（硬件序列号，稳定）而不是 serial（无线连接串，重连换端口就变，
+        # 离线设备 serial 还是空字符串，多台离线设备会互相覆盖 key）
         self.dev_vars: dict[str, tk.BooleanVar] = {}
         for d in self.devices:
-            var = tk.BooleanVar(value=d.profile is not None)  # 未标定的默认不勾
-            self.dev_vars[d.serial] = var
-            ttk.Checkbutton(self.dev_select_frame, text=f"{d.alias}({d.model})", variable=var).pack(side="left", padx=4)
+            var = tk.BooleanVar(value=d.ready)  # 离线/未标定的默认不勾
+            self.dev_vars[d.hw_serial] = var
+            label = f"{d.alias}({d.model})" + ("" if d.online else " [离线]")
+            chk = ttk.Checkbutton(self.dev_select_frame, text=label, variable=var)
+            if not d.online:
+                chk.state(["disabled"])  # 离线设备选不了，避免生成一条永远发不出去的任务
+            chk.pack(side="left", padx=4)
 
     # ── 添加/编辑面板显示 ─────────────────────────────────
     def _is_add_panel_shown(self) -> bool:
@@ -212,6 +325,9 @@ class MainWindow:
 
     # ── 素材选择 ──────────────────────────────────────────
     def _select_folder(self):
+        # 用回 Windows 原生"选择文件夹"对话框（用户熟悉的操作习惯）。原生对话框本身
+        # 不显示文件内容，"选完之后能不能确认对不对"这个诉求靠 _set_selected_media
+        # 展示完整文件名列表来解决，不用换成自制浏览器。
         folder = filedialog.askdirectory(parent=self.root, title="选择素材文件夹（文件名 01-09 决定顺序）")
         if not folder:
             return
@@ -232,13 +348,14 @@ class MainWindow:
         self._set_selected_media(list(files))
 
     def _set_selected_media(self, files: list[str]):
+        # 完整列出文件名（不省略），方便用户确认选对了内容——尤其"选文件夹"用的是
+        # 原生对话框、选的过程中看不到里面有什么，选完这里必须让用户一眼核对清楚。
         self.selected_media = files
         if not files:
             self.media_label.config(text="未选择", fg="#888")
             return
-        names = "、".join(os.path.basename(f) for f in files[:3])
-        more = f" 等{len(files)}个" if len(files) > 3 else ""
-        self.media_label.config(text=f"{names}{more}", fg="#333")
+        names = "\n".join(f"{i+1}. {os.path.basename(f)}" for i, f in enumerate(files))
+        self.media_label.config(text=f"共 {len(files)} 个素材（按此顺序发布）：\n{names}", fg="#333")
 
     # ── 确认添加 ──────────────────────────────────────────
     def _parse_time(self, s: str):
@@ -252,7 +369,7 @@ class MainWindow:
         if not self.selected_media:
             messagebox.showwarning("提示", "请先选择素材")
             return
-        selected_devices = [d for d in self.devices if self.dev_vars.get(d.serial, tk.BooleanVar()).get()]
+        selected_devices = [d for d in self.devices if self.dev_vars.get(d.hw_serial, tk.BooleanVar()).get()]
         if not selected_devices:
             messagebox.showwarning("提示", "请至少选择一个设备")
             return
@@ -288,7 +405,10 @@ class MainWindow:
 
         for dev, t in zip(selected_devices, times):
             self.tasks.append({
-                "device_serial": dev.serial,
+                # 存 hw_serial（硬件序列号）不存 serial：无线设备的 serial 是 ip:port，
+                # 重连/换端口就变，任务是提前建的，执行时设备可能已经用了新的连接串，
+                # hw_serial 是跨连接方式稳定的设备身份，任务归属要靠它找，不能靠 serial
+                "device_hw_serial": dev.hw_serial,
                 "device_alias": dev.alias,
                 "images": list(self.selected_media),
                 "caption": caption,
@@ -353,7 +473,7 @@ class MainWindow:
         self._refresh_tree()
         if self.on_retry:
             self.on_retry(task)
-        self.log(f"手动发送：{task.get('device_alias')} {task.get('scheduled_str', '')}")
+        self.log(f"再发一次：{task.get('device_alias')} {task.get('scheduled_str', '')}")
 
     def _stop(self):
         self._is_running = False

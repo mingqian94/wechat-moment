@@ -22,6 +22,25 @@ class AdbError(Exception):
     pass
 
 
+# ── 全局配对/连接（新设备接入用，不依赖已有的 Adb 实例）──────────────
+def pair(adb_path: str, pair_addr: str, code: str) -> tuple[bool, str]:
+    """无线调试配对。pair_addr 是配对页面显示的 ip:port（配对码旁边那个），
+    跟真正用来连接的 ip:port **不是同一个**——这是无线调试的常见坑，两个都要用户提供。"""
+    proc = subprocess.run([adb_path, "pair", pair_addr, code],
+                          stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=20)
+    out = proc.stdout.decode("utf-8", "replace") + proc.stderr.decode("utf-8", "replace")
+    return ("Successfully paired" in out), out
+
+
+def connect(adb_path: str, connect_addr: str) -> tuple[bool, str]:
+    """连接到设备（USB 已连的设备不需要这步；无线调试配对成功后要单独 connect 到
+    连接端口，这个端口跟配对端口不同）。"""
+    proc = subprocess.run([adb_path, "connect", connect_addr],
+                          stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=20)
+    out = proc.stdout.decode("utf-8", "replace") + proc.stderr.decode("utf-8", "replace")
+    return ("connected" in out or "already" in out), out
+
+
 class InjectPermissionError(AdbError):
     """input 注入被 MIUI 拦截——"USB调试（安全设置）"没开或没重启生效。"""
 
