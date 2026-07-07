@@ -36,6 +36,24 @@ def _make_test_video(path: Path):
     writer.release()
 
 
+def verify_image_push(adb: Adb) -> CheckResult:
+    """轻量推片验证：生成一张合成图，推到朋友圈素材目录，触发媒体扫描后删除。"""
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            local_img = Path(tmp) / "_connect_check.png"
+            _make_test_image(local_img)
+            remote_img = f"{MOMENTS_FOLDER}/_connect_check.png"
+            adb.shell(f"mkdir -p {MOMENTS_FOLDER}")
+            adb.push(str(local_img), remote_img)
+            adb.media_scan(remote_img)
+            listing = adb.shell(f"ls {remote_img}")
+            ok = "_connect_check.png" in listing
+            adb.shell(f"rm -f {remote_img}")
+            return CheckResult("推图片", ok, "" if ok else f"push 后未在设备上找到文件: {listing}")
+    except Exception as e:
+        return CheckResult("推图片", False, str(e))
+
+
 def run_diagnostics(adb: Adb) -> list[CheckResult]:
     results = []
 
@@ -65,19 +83,7 @@ def run_diagnostics(adb: Adb) -> list[CheckResult]:
         results.append(CheckResult("模拟点击", False, f"未知错误: {e}"))
 
     # 4. 推图片到专用文件夹
-    try:
-        with tempfile.TemporaryDirectory() as tmp:
-            local_img = Path(tmp) / "_diag.png"
-            _make_test_image(local_img)
-            remote_img = f"{MOMENTS_FOLDER}/_diag_test.png"
-            adb.shell(f"mkdir -p {MOMENTS_FOLDER}")
-            adb.push(str(local_img), remote_img)
-            listing = adb.shell(f"ls {remote_img}")
-            ok = "_diag_test.png" in listing
-            adb.shell(f"rm -f {remote_img}")
-            results.append(CheckResult("推图片", ok, "" if ok else f"push 后未在设备上找到文件: {listing}"))
-    except Exception as e:
-        results.append(CheckResult("推图片", False, str(e)))
+    results.append(verify_image_push(adb))
 
     # 5. 推视频到专用文件夹
     try:

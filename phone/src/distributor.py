@@ -5,6 +5,7 @@
 （publisher.publish_moment 是按"文件夹里第几张"选图，文件夹内容必须跟当前任务一致）。
 """
 import os
+import time
 from pathlib import Path
 
 from adb import Adb, MOMENTS_FOLDER
@@ -19,11 +20,17 @@ def push_task_media(adb: Adb, local_paths: list[str]) -> tuple[bool, str]:
         adb.shell(f"mkdir -p {MOMENTS_FOLDER}")
         adb.shell(f"rm -f {MOMENTS_FOLDER}/*")  # 清空上一条任务的残留
 
-        for i, local in enumerate(local_paths, start=1):
+        batch_id = time.strftime("%Y%m%d_%H%M%S")
+        # 系统/微信相册按最新写入倒序展示；反向 push，才能让选择器顶部保持任务原顺序。
+        indexed_paths = list(enumerate(local_paths, start=1))
+        for i, local in reversed(indexed_paths):
             ext = os.path.splitext(local)[1].lower()
-            remote = f"{MOMENTS_FOLDER}/{i:02d}{ext}"
+            # 固定 01.jpg/02.jpg 会被 Android/微信相册复用旧缩略图缓存，导致界面显示
+            # 上一轮素材。每轮发布用唯一文件名，同时保留序号保证排序稳定。
+            remote = f"{MOMENTS_FOLDER}/wm_{batch_id}_{i:02d}{ext}"
             adb.push(local, remote)
             adb.media_scan(remote)
+            time.sleep(0.2)
 
         return True, ""
     except Exception as e:

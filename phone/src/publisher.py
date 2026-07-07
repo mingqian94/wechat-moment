@@ -23,9 +23,15 @@ base64 编码后一条广播发过去原样输入——emoji、换行、排版�
 小米15 上实测跑通的那份，没传 profile 参数时用它兜底（方便单测/没有 Profile 库时用）。
 """
 import base64
+import io
 import random
+import shutil
+import tempfile
 import time
 from dataclasses import dataclass
+from pathlib import Path
+
+from PIL import Image, ImageOps, ImageStat
 
 
 # 兜底 Profile：小米15 (1200x2670, HyperOS2) 实测跑通的坐标，没传 profile 时使用
@@ -42,6 +48,13 @@ DEFAULT_PROFILE = {
     },
     "image_check_row_ry": 0.127,
     "image_check_col_rx": [0.200, 0.451, 0.703],
+    "picker_grid": {
+        "cols": 4,
+        "top_ry": 0.108,
+        "cell_ry": 0.112,
+        "select_row_ry": 0.127,
+        "select_col_rx": [0.200, 0.451, 0.703],
+    },
 }
 
 ADBKEYBOARD_IME = "com.android.adbkeyboard/.AdbIME"
@@ -72,9 +85,94 @@ def _type_unicode(adb, text: str):
     adb.shell(f"am broadcast -a ADB_INPUT_B64 --es msg {b64}")
 
 
+def _median_rgb(img: Image.Image) -> tuple[int, int, int]:
+    """取缩略图中位色，用来粗略确认相册顶部是否是刚推入的素材。"""
+    fitted = ImageOps.fit(img.convert("RGB"), (64, 64), method=Image.Resampling.LANCZOS)
+    # 去掉选择圈/边线影响，取中间区域
+    core = fitted.crop((8, 8, 56, 56))
+    stat = ImageStat.Stat(core)
+    return tuple(int(v) for v in stat.median)
+
+
+def _color_distance(a: tuple[int, int, int], b: tuple[int, int, int]) -> float:
+    return sum((x - y) ** 2 for x, y in zip(a, b)) ** 0.5
+
+
+def _expected_thumb(local_path: Path) -> Image.Image:
+    """读取本地素材用于相册缩略图校验。视频取第一帧，图片直接读取。"""
+    suffix = local_path.suffix.lower()
+    if suffix in {".mp4", ".mov"}:
+        import cv2
+
+        # OpenCV 在 Windows 上同样可能读不了中文路径；复制到 ASCII 临时路径再取首帧。
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_video = Path(tmp) / f"video{suffix}"
+            shutil.copy2(local_path, tmp_video)
+            cap = cv2.VideoCapture(str(tmp_video))
+            try:
+                ok, frame = cap.read()
+            finally:
+                cap.release()
+        if not ok:
+            raise ValueError(f"无法读取视频首帧: {local_path}")
+        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        return Image.fromarray(frame)
+    return Image.open(local_path)
+
+
+def _verify_picker_top_images(adb, expected_images: list[str], profile: dict,
+                              on_step=None) -> tuple[bool, str]:
+    """确认系统相册顶部前 N 个缩略图和刚推入的本地素材一致。
+
+    这是发布前的硬闸：如果微信相册没有展示刚推入的素材，直接停在选择器页，不继续点
+    完成/发表，避免误选用户真实照片。
+    """
+    if not expected_images:
+        return False, "没有传入待验证素材，拒绝盲选相册图片"
+
+    grid = profile.get("picker_grid", {})
+    cols = int(grid.get("cols", 4))
+    top_ry = float(grid.get("top_ry", 0.108))
+    cell_ry = float(grid.get("cell_ry", 0.112))
+
+    data = adb.screencap()
+    screen = Image.open(io.BytesIO(data)).convert("RGB")
+    w, h = screen.size
+    cell_w = w / cols
+    y0 = int(h * top_ry)
+    y1 = int(h * (top_ry + cell_ry))
+
+    distances = []
+    for i, local in enumerate(expected_images):
+        if i >= cols:
+            return False, "当前只支持验证首行素材，单次最多 4 张"
+        local_path = Path(local)
+        if not local_path.exists():
+            return False, f"本地素材不存在，无法校验: {local_path}"
+
+        x0 = int(i * cell_w)
+        x1 = int((i + 1) * cell_w)
+        thumb = screen.crop((x0, y0, x1, y1))
+        try:
+            expected = _expected_thumb(local_path)
+        except Exception as e:
+            return False, f"本地素材缩略图读取失败，拒绝盲选: {e}"
+        dist = _color_distance(_median_rgb(expected), _median_rgb(thumb))
+        distances.append(round(dist, 1))
+
+    # 颜色中位数不是精确图片识别，只作为误选保护；阈值偏宽，主要拦截完全不相干的照片/证件图。
+    if any(d > 90 for d in distances):
+        return False, f"相册顶部素材校验失败，颜色距离={distances}，疑似没有停在刚推入的素材列表"
+
+    if on_step:
+        on_step(f"相册顶部素材校验通过（颜色距离={distances}）")
+    return True, ""
+
+
 def publish_moment(adb, image_count: int, caption: str = "",
                    restore_ime: str | None = None, profile: dict | None = None,
                    start_from_wechat_home: bool = False,
+                   expected_images: list[str] | None = None,
                    on_step=None) -> PublishResult:
     """
     发一条朋友圈（多图 + 中文文案）。
@@ -88,6 +186,8 @@ def publish_moment(adb, image_count: int, caption: str = "",
              discover_tab + moments_entry 这两个坐标——这两个坐标**按机型各自标定**，不是
              通用值；没标定的机型传 True 会直接返回失败，不会瞎猜坐标去点）。
              默认 False：假定设备已经停在朋友圈页（当前调度流程的实际用法）。
+    expected_images: 本地素材路径。传入后会在相册选择页截图校验顶部缩略图确实是这些素材；
+             校验失败会直接返回失败，避免误选用户真实照片。
     on_step: 可选回调 on_step(str)，每完成一个可辨认的步骤就调用一次，用于把发布过程
              逐步打进运行日志（"点击相机"、"选择素材"……），而不是只有最终成功/失败一行。
 
@@ -95,8 +195,9 @@ def publish_moment(adb, image_count: int, caption: str = "",
     """
     profile = profile or DEFAULT_PROFILE
     coords = profile["coords"]
-    check_row_ry = profile["image_check_row_ry"]
-    check_col_rx = profile["image_check_col_rx"]
+    picker_grid = profile.get("picker_grid", {})
+    check_row_ry = picker_grid.get("select_row_ry", profile["image_check_row_ry"])
+    check_col_rx = picker_grid.get("select_col_rx", profile["image_check_col_rx"])
 
     def _step(msg: str):
         if on_step:
@@ -120,11 +221,14 @@ def publish_moment(adb, image_count: int, caption: str = "",
             tap("discover_tab", "打开微信「发现」")
             tap("moments_entry", "进入朋友圈")
 
-        # Step 4: 相机 → 5: 从相册选择 → 6: 切"朋友圈素材"文件夹
+        # Step 4: 相机 → 5: 从相册选择。刚推入的素材应出现在系统相册顶部；
+        # 后续先校验顶部缩略图，再允许勾选，避免误选用户真实照片。
         tap("moments_camera", "点击相机图标")
         tap("menu_from_album", "选择「从手机相册选择」")
-        tap("album_dropdown", "打开相册文件夹列表")
-        tap("folder_item", "切换到「朋友圈素材」文件夹")
+
+        ok, reason = _verify_picker_top_images(adb, expected_images or [], profile, _step)
+        if not ok:
+            return PublishResult(False, reason)
 
         # Step 6.2: 按顺序勾选前 image_count 张（点击顺序即图片排序）
         n = max(1, min(image_count, len(check_col_rx)))  # 目前一行 3 张，多图需扩展

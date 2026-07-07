@@ -38,6 +38,13 @@ SEED_PROFILES = {
         },
         "image_check_row_ry": 0.127,
         "image_check_col_rx": [0.200, 0.451, 0.703],
+        "picker_grid": {
+            "cols": 4,
+            "top_ry": 0.108,
+            "cell_ry": 0.112,
+            "select_row_ry": 0.127,
+            "select_col_rx": [0.200, 0.451, 0.703],
+        },
     }
 }
 
@@ -72,6 +79,30 @@ def list_known_models() -> list[str]:
 
 
 def ensure_seeded():
-    """首次运行时把内置种子 Profile 落盘，之后可在文件里直接编辑/追加。"""
-    if not PROFILE_FILE.exists():
-        _save_all(dict(SEED_PROFILES))
+    """把内置种子 Profile 落盘，并补齐既有文件缺失的新字段。
+
+    device_profiles.json 是运行时可写文件：用户可能已经为某台机型重新标定过坐标，
+    所以这里不能用内置种子覆盖已有值；只能在版本升级后补入新增机型或新增字段。
+    """
+    profiles = _load_all() if PROFILE_FILE.exists() else {}
+    changed = False
+
+    def merge_missing(dst: dict, src: dict) -> bool:
+        touched = False
+        for key, value in src.items():
+            if key not in dst:
+                dst[key] = value
+                touched = True
+            elif isinstance(dst[key], dict) and isinstance(value, dict):
+                touched = merge_missing(dst[key], value) or touched
+        return touched
+
+    for model, seed in SEED_PROFILES.items():
+        if model not in profiles:
+            profiles[model] = seed
+            changed = True
+        else:
+            changed = merge_missing(profiles[model], seed) or changed
+
+    if changed or not PROFILE_FILE.exists():
+        _save_all(profiles)

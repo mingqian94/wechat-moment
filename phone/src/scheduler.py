@@ -45,8 +45,8 @@ class Scheduler:
             if not self._running:
                 break
 
-            # 跳过已成功发布的任务（停止后重启时保留已发布结果）
-            if task.get("status") == "已发布":
+            # 跳过已提交的任务（停止后重启时不重复发送）
+            if task.get("status") in ("已发布", "待确认"):
                 continue
 
             # 等待到发布时间
@@ -57,7 +57,7 @@ class Scheduler:
 
             # 等待期间任务可能已被"手动发送"发出去了（手动发送走独立线程，不经过本循环），
             # 等完必须重新检查状态，否则会把同一条再发一遍，失败时还会覆盖掉已发布状态
-            if task.get("status") == "已发布":
+            if task.get("status") in ("已发布", "待确认"):
                 continue
 
             # 如果上一个任务还在发布中，等待其完成（失败也视为完成）
@@ -65,7 +65,7 @@ class Scheduler:
                 cb_waiting = self.callbacks.get("on_task_status")
                 if cb_waiting:
                     cb_waiting(idx, "等待上一个任务完成")
-                self._log(f"等待上一个任务完成后再发布: {task['alias']}")
+                self._log(f"等待上一个任务完成后再发布: {task.get('device_alias', '')}")
                 while self._publishing and self._running:
                     time.sleep(1)
 
@@ -73,7 +73,7 @@ class Scheduler:
                 break
 
             # 排队等待期间也可能被手动发送处理掉，再查一次
-            if task.get("status") == "已发布":
+            if task.get("status") in ("已发布", "待确认"):
                 continue
 
             self._publishing = True
@@ -81,26 +81,30 @@ class Scheduler:
             if cb_start:
                 cb_start(idx, task)
 
-            self._log(f"开始发布: {task['alias']} - {task.get('caption', '')[:20]}")
+            self._log(f"开始发布: {task.get('device_alias', '')} - {task.get('caption', '')[:20]}")
 
             try:
                 result = self.publish_fn(task)
             except Exception as e:
                 # publish_fn 内部本应把所有失败都包装成 {"success": False, ...} 返回，
                 # 不该抛异常；这里兜底是为了不让调度线程的未捕获异常静默吞掉整条任务
-                self._log(f"✗ 发布出现未捕获异常 [{task['alias']}]: {e}")
+                self._log(f"✗ 发布出现未捕获异常 [{task.get('device_alias', '')}]: {e}")
                 result = {"success": False, "reason": f"未捕获异常: {e}"}
             self._publishing = False
 
             if result.get("success"):
                 self._consecutive_fail = 0
-                task["status"] = "已发布"
-                self._log(f"✓ 发布成功: {task['alias']}")
+                if result.get("pending_confirm"):
+                    task["status"] = "待确认"
+                    self._log(f"✓ 发布流程完成，待人工确认: {task.get('device_alias', '')}")
+                else:
+                    task["status"] = "已发布"
+                    self._log(f"✓ 发布成功: {task.get('device_alias', '')}")
             else:
                 self._consecutive_fail += 1
                 reason = result.get("reason", "未知错误")
                 task["status"] = f"失败: {reason}"
-                self._log(f"✗ 发布失败 [{task['alias']}]: {reason}")
+                self._log(f"✗ 发布失败 [{task.get('device_alias', '')}]: {reason}")
 
                 if self._consecutive_fail >= 3:
                     self._running = False

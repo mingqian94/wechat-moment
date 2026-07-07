@@ -12,14 +12,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 import logger
 from auth import is_activated, get_version
-import device_manager
-import device_profile
-import distributor
-import publisher
-import diagnostics
-from scheduler import Scheduler
 from gui.activation import ActivationWindow
-from gui.main_window import MainWindow
 
 
 def _find_adb_path() -> str:
@@ -28,9 +21,17 @@ def _find_adb_path() -> str:
     env = os.environ.get("WM_ADB_PATH")
     if env and Path(env).exists():
         return env
-    local = Path(__file__).parent.parent / "platform-tools" / "adb.exe"
-    if local.exists():
-        return str(local)
+    candidates = []
+    if getattr(sys, "frozen", False):
+        exe_dir = Path(sys.executable).resolve().parent
+        candidates.extend([
+            exe_dir / "platform-tools" / "adb.exe",
+            exe_dir / "_internal" / "platform-tools" / "adb.exe",
+        ])
+    candidates.append(Path(__file__).resolve().parent.parent / "platform-tools" / "adb.exe")
+    for local in candidates:
+        if local.exists():
+            return str(local)
     return "adb"  # 交给系统 PATH
 
 
@@ -39,10 +40,13 @@ class App:
         self.version = "基础版"
         self.adb_path = _find_adb_path()
         self.devices: list = []
-        self.scheduler: Scheduler | None = None
-        self.main_win: MainWindow | None = None
+        self.scheduler = None
+        self.main_win = None
+        self._push_verified_hw: set[str] = set()
 
     def run(self):
+        import device_profile
+
         logger.init()
         device_profile.ensure_seeded()
         if is_activated():
@@ -60,7 +64,9 @@ class App:
     AUTO_RESCAN_INTERVAL_MS = 3 * 60 * 1000  # 3 分钟
 
     def _launch_main(self):
-        self.devices = device_manager.discover_devices(self.adb_path)
+        from gui.main_window import MainWindow
+
+        self.devices = []
 
         self.main_win = MainWindow(
             version=self.version,
@@ -72,7 +78,8 @@ class App:
             on_rescan=self._on_rescan,
             on_add_device=self._on_add_device,
         )
-        self._log_devices(f"程序启动，检测到 {len(self.devices)} 台设备")
+        self.main_win.log("程序启动，正在后台扫描设备...")
+        self._on_rescan()
         self.main_win.root.after(self.AUTO_RESCAN_INTERVAL_MS, self._auto_rescan_tick)
         self.main_win.run()
 
@@ -91,10 +98,36 @@ class App:
 
     def _on_rescan(self):
         def _run():
-            self.devices = device_manager.discover_devices(self.adb_path)
-            self.main_win.set_devices(self.devices)
-            self._log_devices(f"重新扫描完成，检测到 {len(self.devices)} 台设备")
+            try:
+                import device_manager
+
+                self.devices = device_manager.discover_devices(self.adb_path)
+                self.main_win.update_devices(self.devices)
+                self._log_devices(f"重新扫描完成，检测到 {len(self.devices)} 台设备")
+                self._verify_image_push_for_new_devices()
+            except Exception as e:
+                self.main_win.log(f"✗ 重新扫描失败：{e}")
         threading.Thread(target=_run, daemon=True).start()
+
+    def _verify_image_push_for_new_devices(self):
+        """设备首次在线时顺手验证能否把合成测试图推到朋友圈素材目录。"""
+        for dev in self.devices:
+            if not dev.online or dev.adb is None or dev.hw_serial in self._push_verified_hw:
+                continue
+            self._push_verified_hw.add(dev.hw_serial)
+
+            def _run(d=dev):
+                import diagnostics
+
+                self.main_win.log(f"[{d.alias}] 连接验证：推送合成测试图到朋友圈素材目录...")
+                result = diagnostics.verify_image_push(d.adb)
+                if result.ok:
+                    self.main_win.log(f"[{d.alias}] ✓ 连接验证通过：可以推图片到朋友圈素材目录")
+                else:
+                    self._push_verified_hw.discard(d.hw_serial)
+                    self.main_win.log(f"[{d.alias}] ✗ 连接验证失败：{result.detail}")
+
+            threading.Thread(target=_run, daemon=True).start()
 
     def _on_add_device(self, connect_addr: str, pair_addr: str | None, pair_code: str | None,
                        alias: str | None = None):
@@ -102,36 +135,42 @@ class App:
         import device_registry
 
         def _run():
-            if pair_addr and pair_code:
-                self.main_win.log(f"配对 {pair_addr} ...")
-                ok, out = adb_module.pair(self.adb_path, pair_addr, pair_code)
+            try:
+                if pair_addr and pair_code:
+                    self.main_win.log(f"配对 {pair_addr} ...")
+                    ok, out = adb_module.pair(self.adb_path, pair_addr, pair_code)
+                    if not ok:
+                        self.main_win.log(f"✗ 配对失败: {out.strip()}")
+                        return
+                    self.main_win.log("✓ 配对成功")
+                self.main_win.log(f"连接 {connect_addr} ...")
+                ok, out = adb_module.connect(self.adb_path, connect_addr)
                 if not ok:
-                    self.main_win.log(f"✗ 配对失败: {out.strip()}")
+                    self.main_win.log(f"✗ 连接失败: {out.strip()}"
+                                      + ("" if pair_addr else "（如果是首次接入的新设备，勾选"
+                                         "「这是首次接入的新设备」填配对信息再试）"))
                     return
-                self.main_win.log("✓ 配对成功")
-            self.main_win.log(f"连接 {connect_addr} ...")
-            ok, out = adb_module.connect(self.adb_path, connect_addr)
-            if not ok:
-                self.main_win.log(f"✗ 连接失败: {out.strip()}"
-                                  + ("" if pair_addr else "（如果是首次接入的新设备，勾选"
-                                     "「这是首次接入的新设备」填配对信息再试）"))
-                return
-            self.main_win.log("✓ 连接成功")
+                self.main_win.log("✓ 连接成功")
 
-            if alias:
-                # 连上之后才拿得到硬件序列号（备注按它持久化，不是按会变化的连接串）
-                try:
-                    hw_serial = adb_module.Adb(self.adb_path, connect_addr).shell("getprop ro.serialno").strip()
-                    device_registry.upsert(hw_serial, alias=alias, last_seen_addr=connect_addr)
-                    self.main_win.log(f"设备备注已存为「{alias}」")
-                except Exception as e:
-                    self.main_win.log(f"⚠ 备注保存失败（不影响使用）：{e}")
+                if alias:
+                    # 连上之后才拿得到硬件序列号（备注按它持久化，不是按会变化的连接串）
+                    try:
+                        hw_serial = adb_module.Adb(self.adb_path, connect_addr).shell("getprop ro.serialno").strip()
+                        device_registry.upsert(hw_serial, alias=alias, last_seen_addr=connect_addr)
+                        self.main_win.log(f"设备备注已存为「{alias}」")
+                    except Exception as e:
+                        self.main_win.log(f"⚠ 备注保存失败（不影响使用）：{e}")
 
-            self._on_rescan()
+                self._on_rescan()
+            except Exception as e:
+                self.main_win.log(f"✗ 添加设备失败：{e}")
         threading.Thread(target=_run, daemon=True).start()
 
     # ── 调度 ──────────────────────────────────────────────
     def _publish_fn(self, task: dict) -> dict:
+        import distributor
+        import publisher
+
         alias = task.get("device_alias", "")
 
         def step_log(msg: str):
@@ -145,22 +184,52 @@ class App:
         if dev.profile is None:
             return {"success": False, "reason": f"机型 {dev.model} 未标定坐标"}
 
+        media_type = distributor.media_type(task["images"])
+        if media_type == "mixed":
+            return {"success": False, "reason": "微信不支持图片和视频混发，请拆成两条任务"}
+        if media_type == "video" and len(task["images"]) != 1:
+            return {"success": False, "reason": "视频任务一次只支持 1 个视频"}
+
+        step_log("唤醒手机屏幕并保持亮屏")
+        try:
+            dev.adb.shell("input keyevent KEYCODE_WAKEUP", timeout=5)
+            dev.adb.shell("wm dismiss-keyguard", timeout=5)
+            dev.adb.shell("svc power stayon true", timeout=5)
+        except Exception as e:
+            step_log(f"亮屏设置失败，继续尝试发布：{e}")
+
         step_log("推送素材到手机相册专用文件夹")
         ok, reason = distributor.push_task_media(dev.adb, task["images"])
         if not ok:
             return {"success": False, "reason": reason}
         step_log("素材推送完成")
 
+        step_log("启动微信并进入首页")
+        dev.adb.shell("am force-stop com.tencent.mm")
+        time.sleep(1)
+        dev.adb.shell("monkey -p com.tencent.mm -c android.intent.category.LAUNCHER 1")
+        time.sleep(3)
+
         result = publisher.publish_moment(
             dev.adb,
             image_count=len(task["images"]),
             caption=task.get("caption", ""),
             profile=dev.profile,
+            start_from_wechat_home=True,
+            expected_images=task["images"],
             on_step=step_log,
         )
-        return {"success": result.success, "reason": result.reason}
+        if result.success:
+            return {
+                "success": True,
+                "pending_confirm": True,
+                "reason": "流程已提交，需人工回看朋友圈确认真实发布状态",
+            }
+        return {"success": False, "reason": result.reason}
 
     def _on_start(self):
+        from scheduler import Scheduler
+
         tasks = self.main_win.tasks
         if self.scheduler and self.scheduler._running:
             existing_ids = {id(t) for t in self.scheduler.schedule}
@@ -198,8 +267,8 @@ class App:
                 if self.scheduler:
                     self.scheduler._publishing = False
             if result.get("success"):
-                task["status"] = "已发布"
-                self.main_win.log(f"✓ 重发成功：{task.get('device_alias')}")
+                task["status"] = "待确认" if result.get("pending_confirm") else "已发布"
+                self.main_win.log(f"✓ 重发流程完成：{task.get('device_alias')} — {result.get('reason', '')}")
             else:
                 task["status"] = f"失败: {result.get('reason', '未知错误')}"
                 self.main_win.log(f"✗ 重发失败：{task.get('device_alias')} — {result.get('reason')}")
@@ -215,6 +284,8 @@ class App:
 
     def _on_diagnose(self, dev):
         def _run():
+            import diagnostics
+
             self.main_win.log(f"[{dev.alias}] 开始自检...")
             results = diagnostics.run_diagnostics(dev.adb)
             self.main_win.log(f"[{dev.alias}] 自检结果：\n{diagnostics.format_report(results)}")

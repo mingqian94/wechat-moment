@@ -69,7 +69,21 @@ class Adb:
         return out, err, proc.returncode
 
     def shell(self, cmd: str, timeout: float = 30) -> str:
-        out, err, code = self._run(["shell", cmd], timeout=timeout)
+        # Windows 版 adb.exe 接收 argv 里的中文时可能按本机代码页降级成 "????"；
+        # 远端中文目录（如 /sdcard/Pictures/朋友圈素材）必须走 stdin 传 UTF-8。
+        if any(ord(ch) > 127 for ch in cmd):
+            proc = subprocess.run(
+                [self.adb_path, "-s", self.serial, "shell"],
+                input=(cmd + "\nexit\n").encode("utf-8"),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=timeout,
+            )
+            out = proc.stdout.decode("utf-8", "replace")
+            err = proc.stderr.decode("utf-8", "replace")
+            code = proc.returncode
+        else:
+            out, err, code = self._run(["shell", cmd], timeout=timeout)
         if code != 0 or "SecurityException" in err or "SecurityException" in out:
             if "INJECT_EVENTS" in (out + err):
                 raise InjectPermissionError(

@@ -7,7 +7,7 @@ class ActivationWindow:
     def __init__(self, on_success: Callable[[str], None]):
         self.on_success = on_success
         self.root = tk.Tk()
-        self.root.title("朋友圈发布助手 · 操作手机版 - 激活")
+        self.root.title("朋友圈发布助手 - 激活")
         self.root.resizable(True, True)
         self.root.minsize(440, 300)
         self._center(480, 320)
@@ -27,7 +27,7 @@ class ActivationWindow:
         root.configure(bg="#f5f5f5")
         pad = {"padx": 24, "pady": 0}
 
-        tk.Label(root, text="朋友圈发布助手 · 操作手机版", font=("", 16, "bold"), bg="#f5f5f5").pack(pady=(24, 4))
+        tk.Label(root, text="朋友圈发布助手", font=("", 16, "bold"), bg="#f5f5f5").pack(pady=(24, 4))
         tk.Label(root, text="请输入注册码以激活程序", font=("", 10), fg="#888", bg="#f5f5f5").pack()
 
         tk.Frame(root, height=1, bg="#ddd").pack(fill="x", padx=24, pady=12)

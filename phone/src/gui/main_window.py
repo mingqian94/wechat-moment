@@ -10,6 +10,8 @@ from datetime import datetime, timedelta
 from tkinter import ttk, messagebox, filedialog
 from typing import Callable
 
+import distributor
+
 
 class MainWindow:
     def __init__(self, version: str, devices: list,
@@ -37,7 +39,7 @@ class MainWindow:
         self.selected_media: list[str] = []
 
         self.root = tk.Tk()
-        self.root.title("朋友圈发布助手 · 操作手机版")
+        self.root.title("朋友圈发布助手")
         self.root.minsize(900, 680)
         self._center(960, 720)
         self._build()
@@ -62,7 +64,7 @@ class MainWindow:
         top = tk.Frame(root, bg="#4a7c59", height=56)
         top.pack(fill="x")
         top.pack_propagate(False)
-        tk.Label(top, text="朋友圈发布助手 · 操作手机版",
+        tk.Label(top, text="朋友圈发布助手",
                  font=("", 15, "bold"), fg="white", bg="#4a7c59").pack(side="left", padx=(16, 20), pady=14)
 
         # ── 设备状态 ──────────────────────────────────────
@@ -135,34 +137,62 @@ class MainWindow:
 
     def _build_add_panel(self, panel):
         pad_x = 10
+        canvas = tk.Canvas(panel, bg="#f5f5f5", highlightthickness=0)
+        scrollbar = ttk.Scrollbar(panel, orient="vertical", command=canvas.yview)
+        canvas.configure(yscrollcommand=scrollbar.set)
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+
+        form = tk.Frame(canvas, bg="#f5f5f5")
+        form_window = canvas.create_window((0, 0), window=form, anchor="nw")
+
+        def _sync_scroll_region(_event=None):
+            canvas.configure(scrollregion=canvas.bbox("all"))
+
+        def _sync_width(event):
+            canvas.itemconfigure(form_window, width=event.width)
+
+        def _bind_mousewheel(_event):
+            canvas.bind_all("<MouseWheel>", _on_mousewheel)
+
+        def _unbind_mousewheel(_event):
+            canvas.unbind_all("<MouseWheel>")
+
+        def _on_mousewheel(event):
+            canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+
+        form.bind("<Configure>", _sync_scroll_region)
+        canvas.bind("<Configure>", _sync_width)
+        canvas.bind("<Enter>", _bind_mousewheel)
+        canvas.bind("<Leave>", _unbind_mousewheel)
 
         def row_label(text):
-            tk.Label(panel, text=text, font=("", 9, "bold"), bg="#f5f5f5", anchor="w").pack(fill="x", padx=pad_x, pady=(8, 2))
+            tk.Label(form, text=text, font=("", 9, "bold"), bg="#f5f5f5", anchor="w").pack(fill="x", padx=pad_x, pady=(6, 2))
 
-        tk.Label(panel, text="添加任务", font=("", 12, "bold"), bg="#f5f5f5").pack(pady=(10, 4))
+        tk.Label(form, text="添加任务", font=("", 12, "bold"), bg="#f5f5f5").pack(pady=(8, 2))
 
         row_label("素材")
-        self.media_label = tk.Label(panel, text="未选择", bg="#f5f5f5", fg="#888",
+        self.media_label = tk.Label(form, text="未选择", bg="#f5f5f5", fg="#888",
                                      anchor="w", justify="left")
         self.media_label.pack(fill="x", padx=pad_x)
-        btn_frame = tk.Frame(panel, bg="#f5f5f5")
+        btn_frame = tk.Frame(form, bg="#f5f5f5")
         btn_frame.pack(fill="x", padx=pad_x, pady=(2, 0))
         ttk.Button(btn_frame, text="选文件夹...", command=self._select_folder).pack(side="left", padx=(0, 4))
         ttk.Button(btn_frame, text="选文件...", command=self._select_files).pack(side="left")
 
         row_label("目标设备（可多选，每台各生成一条任务）")
-        self.dev_select_frame = tk.Frame(panel, bg="#f5f5f5")
+        self.dev_select_frame = tk.Frame(form, bg="#f5f5f5")
         self.dev_select_frame.pack(fill="x", padx=pad_x)
         self._refresh_device_checkboxes()
 
         row_label("文案")
-        self.caption_text = tk.Text(panel, height=4, wrap="word", relief="solid", bd=1)
+        self.caption_text = tk.Text(form, height=3, wrap="word", relief="solid", bd=1)
         self.caption_text.pack(fill="x", padx=pad_x)
-        tk.Label(panel, text="提示：支持中文/emoji/换行，设备需已装 ADBKeyboard",
+        tk.Label(form, text="提示：支持中文/emoji/换行，设备需已装 ADBKeyboard",
                  font=("", 8), fg="#888", bg="#f5f5f5", anchor="w").pack(fill="x", padx=pad_x, pady=(2, 0))
 
         row_label("发布时段（至少 3 分钟）")
-        time_frame = tk.Frame(panel, bg="#f5f5f5")
+        time_frame = tk.Frame(form, bg="#f5f5f5")
         time_frame.pack(fill="x", padx=pad_x)
         self.start_var = tk.StringVar(value="09:00")
         self.end_var = tk.StringVar(value="12:00")
@@ -170,8 +200,8 @@ class MainWindow:
         tk.Label(time_frame, text=" — ", bg="#f5f5f5").pack(side="left")
         ttk.Entry(time_frame, textvariable=self.end_var, width=7).pack(side="left")
 
-        btn_row = tk.Frame(panel, bg="#f5f5f5")
-        btn_row.pack(pady=10)
+        btn_row = tk.Frame(form, bg="#f5f5f5")
+        btn_row.pack(pady=8)
         ttk.Button(btn_row, text="确  定", width=10, command=self._confirm_add).pack(side="left", padx=6)
         ttk.Button(btn_row, text="取  消", width=10, command=self._hide_add_panel).pack(side="left", padx=6)
 
@@ -181,6 +211,9 @@ class MainWindow:
         self.devices = devices
         self._refresh_devices()
         self._refresh_device_checkboxes()
+
+    def update_devices(self, devices: list):
+        self._cmd_queue.put(("devices", devices))
 
     def _rescan_devices(self):
         if self.on_rescan:
@@ -317,11 +350,34 @@ class MainWindow:
 
     def _show_add_panel(self):
         if not self._is_add_panel_shown():
-            self.main_paned.add(self.add_panel, minsize=320)
+            self._reset_add_form()
+            self.main_paned.add(self.add_panel, minsize=260)
+            self.root.after(50, self._fit_add_panel)
+
+    def _fit_add_panel(self):
+        """打开添加任务面板时压缩上方任务列表，保证底部时间/按钮在常见屏幕上可见。"""
+        try:
+            panes = self.main_paned.panes()
+            if len(panes) >= 2:
+                self.main_paned.sash_place(0, 0, 240)
+        except Exception:
+            pass
 
     def _hide_add_panel(self):
         if self._is_add_panel_shown():
             self.main_paned.remove(self.add_panel)
+
+    def _reset_add_form(self):
+        self._set_selected_media([])
+        self.caption_text.delete("1.0", "end")
+        now = datetime.now() + timedelta(minutes=4)
+        end = now + timedelta(minutes=5)
+        self.start_var.set(now.strftime("%H:%M"))
+        self.end_var.set(end.strftime("%H:%M"))
+        for d in self.devices:
+            var = self.dev_vars.get(d.hw_serial)
+            if var is not None:
+                var.set(d.ready)
 
     # ── 素材选择 ──────────────────────────────────────────
     def _select_folder(self):
@@ -369,6 +425,13 @@ class MainWindow:
         if not self.selected_media:
             messagebox.showwarning("提示", "请先选择素材")
             return
+        media_type = distributor.media_type(self.selected_media)
+        if media_type == "mixed":
+            messagebox.showwarning("提示", "微信不支持图片和视频混发，请拆成两条任务")
+            return
+        if media_type == "video" and len(self.selected_media) != 1:
+            messagebox.showwarning("提示", "视频任务一次只支持 1 个视频")
+            return
         selected_devices = [d for d in self.devices if self.dev_vars.get(d.hw_serial, tk.BooleanVar()).get()]
         if not selected_devices:
             messagebox.showwarning("提示", "请至少选择一个设备")
@@ -411,6 +474,7 @@ class MainWindow:
                 "device_hw_serial": dev.hw_serial,
                 "device_alias": dev.alias,
                 "images": list(self.selected_media),
+                "media_type": media_type,
                 "caption": caption,
                 "scheduled_time": t,
                 "scheduled_str": t.strftime("%H:%M:%S"),
@@ -425,10 +489,11 @@ class MainWindow:
     # ── 任务列表 ──────────────────────────────────────────
     def _refresh_tree(self):
         self.tree.delete(*self.tree.get_children())
-        done = sum(1 for t in self.tasks if t.get("status") == "已发布")
+        done = sum(1 for t in self.tasks if t.get("status") in ("已发布", "待确认"))
         self.progress_var.set(f"{done} / {len(self.tasks)}")
         for t in self.tasks:
-            media_desc = f"{len(t['images'])}个素材"
+            media_type = t.get("media_type") or distributor.media_type(t["images"])
+            media_desc = "1个视频" if media_type == "video" else f"{len(t['images'])}张图片"
             status = t.get("status", "")
             tags = ("failed",) if status.startswith("失败") else ()
             self.tree.insert("", "end", values=(
@@ -466,7 +531,7 @@ class MainWindow:
         if not (0 <= idx < len(self.tasks)):
             return
         task = self.tasks[idx]
-        if task.get("status") == "已发布":
+        if task.get("status") in ("已发布", "待确认"):
             messagebox.showinfo("提示", "该任务已发布成功，无需重复发送")
             return
         task["status"] = "等待中"
@@ -516,6 +581,9 @@ class MainWindow:
                 if 0 <= idx < len(self.tasks):
                     self.tasks[idx]["status"] = status
                 self._refresh_tree()
+            elif cmd[0] == "devices":
+                _, devices = cmd
+                self.set_devices(devices)
             elif cmd[0] == "all_done":
                 self._is_running = False
                 self.log("今日任务全部完成 ✓")
