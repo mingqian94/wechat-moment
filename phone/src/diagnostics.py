@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from adb import Adb, AdbError, InjectPermissionError, MOMENTS_FOLDER
-from publisher import ADBKEYBOARD_IME
+from publisher import ADBKEYBOARD_IME, _restore_user_keyboard
 
 
 @dataclass
@@ -109,12 +109,13 @@ def run_diagnostics(adb: Adb) -> list[CheckResult]:
                                        "未安装，需按《手机配置清单》手动装 ADBKeyboard.apk"))
         else:
             prev_ime = adb.shell("settings get secure default_input_method").strip()
-            adb.shell(f"ime enable {ADBKEYBOARD_IME}")
-            adb.shell(f"ime set {ADBKEYBOARD_IME}")
-            cur = adb.shell("settings get secure default_input_method").strip()
-            ok = cur == ADBKEYBOARD_IME
-            if prev_ime and prev_ime != ADBKEYBOARD_IME:
-                adb.shell(f"ime set {prev_ime}")  # 测完切回用户原输入法
+            try:
+                adb.shell(f"ime enable {ADBKEYBOARD_IME}")
+                adb.shell(f"ime set {ADBKEYBOARD_IME}")
+                cur = adb.shell("settings get secure default_input_method").strip()
+                ok = cur == ADBKEYBOARD_IME
+            finally:
+                _restore_user_keyboard(adb, None, prev_ime)
             results.append(CheckResult("键盘(ADBKeyboard)", ok,
                                        "" if ok else "已安装但切换输入法未生效"))
     except Exception as e:
@@ -124,11 +125,13 @@ def run_diagnostics(adb: Adb) -> list[CheckResult]:
 
 
 def format_report(results: list[CheckResult]) -> str:
+    failed = [r for r in results if not r.ok]
+    if not failed:
+        return "全部通过"
     lines = []
-    for r in results:
-        mark = "✓" if r.ok else "✗"
-        line = f"  {mark} {r.name}"
-        if not r.ok and r.detail:
+    for r in failed:
+        line = f"  ✗ {r.name}"
+        if r.detail:
             line += f" — {r.detail}"
         lines.append(line)
     return "\n".join(lines)

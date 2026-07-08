@@ -85,6 +85,29 @@ def _type_unicode(adb, text: str):
     adb.shell(f"am broadcast -a ADB_INPUT_B64 --es msg {b64}")
 
 
+def _list_enabled_imes(adb) -> list[str]:
+    out = adb.shell("ime list -s", timeout=10)
+    return [line.strip() for line in out.splitlines() if line.strip()]
+
+
+def _choose_restore_ime(adb, preferred: str | None, prev_ime: str | None) -> str | None:
+    candidates = [preferred, prev_ime]
+    candidates += _list_enabled_imes(adb)
+    for ime in candidates:
+        if ime and ime != ADBKEYBOARD_IME:
+            return ime
+    return None
+
+
+def _restore_user_keyboard(adb, preferred: str | None, prev_ime: str | None):
+    target_ime = _choose_restore_ime(adb, preferred, prev_ime)
+    if not target_ime:
+        return
+    current = adb.shell("settings get secure default_input_method", timeout=10).strip()
+    if current != target_ime:
+        adb.shell(f"ime set {target_ime}", timeout=10)
+
+
 def _median_rgb(img: Image.Image) -> tuple[int, int, int]:
     """取缩略图中位色，用来粗略确认相册顶部是否是刚推入的素材。"""
     fitted = ImageOps.fit(img.convert("RGB"), (64, 64), method=Image.Resampling.LANCZOS)
@@ -118,6 +141,14 @@ def _expected_thumb(local_path: Path) -> Image.Image:
         frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         return Image.fromarray(frame)
     return Image.open(local_path)
+
+
+def _is_video_task(local_paths: list[str] | None) -> bool:
+    return bool(
+        local_paths
+        and len(local_paths) == 1
+        and Path(local_paths[0]).suffix.lower() in {".mp4", ".mov"}
+    )
 
 
 def _verify_picker_top_images(adb, expected_images: list[str], profile: dict,
@@ -213,6 +244,7 @@ def publish_moment(adb, image_count: int, caption: str = "",
     prev_ime = None
     try:
         adb.ensure_online()
+        prev_ime = adb.shell("settings get secure default_input_method").strip()
 
         if start_from_wechat_home:
             if "discover_tab" not in coords or "moments_entry" not in coords:
@@ -240,10 +272,12 @@ def publish_moment(adb, image_count: int, caption: str = "",
 
         # Step 6.3: 完成
         tap("album_done", "确认选图")
+        if _is_video_task(expected_images):
+            # 微信选视频后会先进视频编辑页，仍需再点一次“完成”才回到朋友圈编辑页。
+            tap("album_done", "确认视频编辑")
 
         # Step 7: 中文文案（切到 ADBKeyboard → 输入）
         if caption:
-            prev_ime = adb.shell("settings get secure default_input_method").strip()
             adb.shell(f"ime enable {ADBKEYBOARD_IME}")
             adb.shell(f"ime set {ADBKEYBOARD_IME}")
             _sleep(PICK_WAIT)
@@ -261,10 +295,9 @@ def publish_moment(adb, image_count: int, caption: str = "",
     except Exception as e:
         return PublishResult(False, f"发布异常: {e}")
     finally:
-        # 恢复用户输入法（优先 restore_ime，否则切回发布前的）
-        target_ime = restore_ime or prev_ime
-        if target_ime and caption:
-            try:
-                adb.shell(f"ime set {target_ime}")
-            except Exception:
-                pass
+        # 恢复用户输入法。若发布前已经停在 ADBKeyboard，则切到任一已启用的非 ADBKeyboard 输入法，
+        # 避免业务人员发完后手机键盘仍是 ADBKeyboard。
+        try:
+            _restore_user_keyboard(adb, restore_ime, prev_ime)
+        except Exception:
+            pass

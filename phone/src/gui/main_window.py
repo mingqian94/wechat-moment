@@ -18,10 +18,12 @@ class MainWindow:
                  on_start: Callable,
                  on_stop: Callable,
                  on_retry: Callable | None = None,
-                 on_diagnose: Callable | None = None,
-                 on_rename: Callable | None = None,
-                 on_rescan: Callable | None = None,
-                 on_add_device: Callable | None = None):
+                  on_diagnose: Callable | None = None,
+                  on_rename: Callable | None = None,
+                  on_rescan: Callable | None = None,
+                  on_add_device: Callable | None = None,
+                  on_export_config: Callable | None = None,
+                  on_import_config: Callable | None = None):
         self.version = version
         self.devices = devices  # list[device_manager.Device]
         self.on_start = on_start
@@ -31,6 +33,8 @@ class MainWindow:
         self.on_rename = on_rename
         self.on_rescan = on_rescan
         self.on_add_device = on_add_device
+        self.on_export_config = on_export_config
+        self.on_import_config = on_import_config
 
         self.tasks: list[dict] = []
         self._is_running = False
@@ -61,21 +65,34 @@ class MainWindow:
         root = self.root
         root.configure(bg="#f5f5f5")
 
-        top = tk.Frame(root, bg="#4a7c59", height=56)
+        top = tk.Frame(root, bg="#4a7c59", height=48)
         top.pack(fill="x")
         top.pack_propagate(False)
         tk.Label(top, text="朋友圈发布助手",
-                 font=("", 15, "bold"), fg="white", bg="#4a7c59").pack(side="left", padx=(16, 20), pady=14)
+                 font=("", 15, "bold"), fg="white", bg="#4a7c59").pack(side="left", padx=(16, 20), pady=10)
 
         # ── 设备状态 ──────────────────────────────────────
         dev_frame = tk.LabelFrame(root, text="手机设备", bg="#f5f5f5", font=("", 10))
-        dev_frame.pack(fill="x", padx=16, pady=(10, 0))
+        dev_frame.pack(fill="x", padx=16, pady=(6, 0))
+        dev_frame.configure(height=88)
+        dev_frame.pack_propagate(False)
         dev_btn_row = tk.Frame(dev_frame, bg="#f5f5f5")
-        dev_btn_row.pack(fill="x", padx=8, pady=(4, 0))
+        dev_btn_row.pack(fill="x", padx=8, pady=(2, 0))
         ttk.Button(dev_btn_row, text="🔄 重新扫描", command=self._rescan_devices).pack(side="left", padx=(0, 4))
-        ttk.Button(dev_btn_row, text="➕ 添加设备", command=self._add_device_dialog).pack(side="left")
-        self.dev_frame_inner = tk.Frame(dev_frame, bg="#f5f5f5")
-        self.dev_frame_inner.pack(fill="x", padx=8, pady=6)
+        ttk.Button(dev_btn_row, text="➕ 添加设备", command=self._add_device_dialog).pack(side="left", padx=(0, 4))
+        ttk.Button(dev_btn_row, text="导出配置", command=self._export_config).pack(side="left", padx=(0, 4))
+        ttk.Button(dev_btn_row, text="导入配置", command=self._import_config).pack(side="left")
+        self.dev_canvas = tk.Canvas(dev_frame, height=38, bg="#f5f5f5", highlightthickness=0)
+        self.dev_scroll_x = ttk.Scrollbar(dev_frame, orient="horizontal", command=self.dev_canvas.xview)
+        self.dev_frame_inner = tk.Frame(self.dev_canvas, bg="#f5f5f5")
+        self.dev_canvas_window = self.dev_canvas.create_window((0, 0), window=self.dev_frame_inner, anchor="nw")
+        self.dev_canvas.configure(xscrollcommand=self.dev_scroll_x.set)
+        self.dev_canvas.pack(fill="x", padx=8, pady=(2, 0))
+        self.dev_scroll_x.pack(fill="x", padx=8, pady=(0, 3))
+        self.dev_frame_inner.bind(
+            "<Configure>",
+            lambda _e: self.dev_canvas.configure(scrollregion=self.dev_canvas.bbox("all"))
+        )
         self._refresh_devices()
 
         # ── 主内容区 ──────────────────────────────────────
@@ -83,7 +100,7 @@ class MainWindow:
         self.main_paned.pack(fill="both", expand=True, padx=16, pady=8)
 
         left_frame = tk.Frame(self.main_paned, bg="#f5f5f5")
-        self.main_paned.add(left_frame, minsize=160)
+        self.main_paned.add(left_frame, minsize=100)
 
         # 任务标题/进度 + 全部操作按钮放同一行
         ctrl_frame = tk.Frame(left_frame, bg="#f5f5f5")
@@ -110,7 +127,7 @@ class MainWindow:
         style.configure("Treeview.Heading", font=("", 10, "bold"))
 
         cols = ("time", "device", "media", "caption", "status")
-        self.tree = ttk.Treeview(list_frame, columns=cols, show="headings", height=12, selectmode="browse")
+        self.tree = ttk.Treeview(list_frame, columns=cols, show="headings", height=6, selectmode="browse")
         headers = {"time": ("时间", 65), "device": ("设备", 90), "media": ("素材", 120),
                    "caption": ("文案", 260), "status": ("状态", 90)}
         for col, (label, width) in headers.items():
@@ -221,6 +238,37 @@ class MainWindow:
         else:
             self.log("未接入重新扫描逻辑")
 
+    def _export_config(self):
+        if not self.on_export_config:
+            return
+        path = filedialog.asksaveasfilename(
+            parent=self.root,
+            title="导出连接配置",
+            defaultextension=".zip",
+            filetypes=[("配置包", "*.zip")],
+            initialfile=f"朋友圈发布助手-连接配置-{datetime.now().strftime('%Y%m%d%H%M')}.zip",
+        )
+        if path:
+            self.on_export_config(path)
+
+    def _import_config(self):
+        if not self.on_import_config:
+            return
+        path = filedialog.askopenfilename(
+            parent=self.root,
+            title="导入连接配置",
+            filetypes=[("配置包", "*.zip")],
+        )
+        if not path:
+            return
+        ok = messagebox.askyesno(
+            "导入连接配置",
+            "导入会覆盖本机 ADB 信任文件和设备别名配置；现有文件会自动备份。确定导入吗？",
+            parent=self.root,
+        )
+        if ok:
+            self.on_import_config(path)
+
     def _add_device_dialog(self):
         win = tk.Toplevel(self.root)
         win.title("添加设备")
@@ -313,15 +361,15 @@ class MainWindow:
             else:
                 color = "#c0392b"
                 status = "未标定坐标"
-            f = tk.Frame(self.dev_frame_inner, bg="#f5f5f5")
-            f.pack(side="left", padx=8)
+            f = tk.Frame(self.dev_frame_inner, bg="#f5f5f5", width=104, height=36)
+            f.pack(side="left", padx=(0, 8))
+            f.pack_propagate(False)
             alias_label = tk.Label(f, text=d.alias, font=("", 9, "bold"), bg="#f5f5f5", cursor="hand2",
                                    fg=("#999" if not d.online else "#000"))
             alias_label.pack()
             alias_label.bind("<Double-Button-1>", lambda e, dev=d: self._rename_device(dev))
-            tk.Label(f, text=d.model, font=("", 8), bg="#f5f5f5", fg="#666").pack()
-            tk.Label(f, text=status, font=("", 8), bg="#f5f5f5", fg=color).pack()
-            tk.Label(f, text="双击改备注", font=("", 7), bg="#f5f5f5", fg="#aaa").pack()
+            tk.Label(f, text=d.model, font=("", 7), bg="#f5f5f5", fg="#666").pack()
+            tk.Label(f, text=status, font=("", 7), bg="#f5f5f5", fg=color).pack()
 
     def _refresh_device_checkboxes(self):
         for w in self.dev_select_frame.winfo_children():
@@ -359,7 +407,7 @@ class MainWindow:
         try:
             panes = self.main_paned.panes()
             if len(panes) >= 2:
-                self.main_paned.sash_place(0, 0, 240)
+                self.main_paned.sash_place(0, 0, 120)
         except Exception:
             pass
 

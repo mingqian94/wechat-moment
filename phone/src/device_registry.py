@@ -8,12 +8,20 @@
 "添加设备"流程。
 """
 import json
+import os
 import sys
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass
 from pathlib import Path
 
-_APP_DIR = Path(sys.executable).parent if getattr(sys, "frozen", False) else Path(__file__).parent.parent
-REGISTRY_FILE = _APP_DIR / "device_registry.json"
+def _app_data_dir() -> Path:
+    base = os.environ.get("LOCALAPPDATA") or os.environ.get("APPDATA")
+    root = Path(base) if base else Path.home() / "AppData" / "Local"
+    path = root / "朋友圈发布助手"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+REGISTRY_FILE = _app_data_dir() / "device_registry.json"
 
 
 @dataclass

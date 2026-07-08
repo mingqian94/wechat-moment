@@ -77,6 +77,8 @@ class App:
             on_diagnose=self._on_diagnose,
             on_rescan=self._on_rescan,
             on_add_device=self._on_add_device,
+            on_export_config=self._on_export_config,
+            on_import_config=self._on_import_config,
         )
         self.main_win.log("程序启动，正在后台扫描设备...")
         self._on_rescan()
@@ -107,7 +109,7 @@ class App:
                 self._verify_image_push_for_new_devices()
             except Exception as e:
                 self.main_win.log(f"✗ 重新扫描失败：{e}")
-        threading.Thread(target=_run, daemon=True).start()
+            threading.Thread(target=_run, daemon=True).start()
 
     def _verify_image_push_for_new_devices(self):
         """设备首次在线时顺手验证能否把合成测试图推到朋友圈素材目录。"""
@@ -128,6 +130,44 @@ class App:
                     self.main_win.log(f"[{d.alias}] ✗ 连接验证失败：{result.detail}")
 
             threading.Thread(target=_run, daemon=True).start()
+
+    def _on_export_config(self, path: str):
+        def _run():
+            try:
+                import config_transfer
+
+                exported = config_transfer.export_config(path)
+                if exported:
+                    self.main_win.log(f"✓ 连接配置已导出：{path}")
+                    self.main_win.log("  已包含：" + "、".join(exported))
+                else:
+                    self.main_win.log("⚠ 没找到可导出的 ADB 信任文件或设备别名配置")
+            except Exception as e:
+                self.main_win.log(f"✗ 导出连接配置失败：{e}")
+
+        threading.Thread(target=_run, daemon=True).start()
+
+    def _on_import_config(self, path: str):
+        def _run():
+            try:
+                import config_transfer
+                from adb import _run_hidden
+
+                imported = config_transfer.import_config(path)
+                if not imported:
+                    self.main_win.log("⚠ 配置包里没有可导入的连接配置")
+                    return
+                self.main_win.log("✓ 连接配置已导入：" + "、".join(imported))
+                try:
+                    _run_hidden([self.adb_path, "kill-server"], timeout=10)
+                    self.main_win.log("  已重启 ADB，正在重新扫描设备...")
+                except Exception as e:
+                    self.main_win.log(f"  ADB 重启失败，请手动重启程序后再试：{e}")
+                self._on_rescan()
+            except Exception as e:
+                self.main_win.log(f"✗ 导入连接配置失败：{e}")
+
+        threading.Thread(target=_run, daemon=True).start()
 
     def _on_add_device(self, connect_addr: str, pair_addr: str | None, pair_code: str | None,
                        alias: str | None = None):
@@ -288,7 +328,8 @@ class App:
 
             self.main_win.log(f"[{dev.alias}] 开始自检...")
             results = diagnostics.run_diagnostics(dev.adb)
-            self.main_win.log(f"[{dev.alias}] 自检结果：\n{diagnostics.format_report(results)}")
+            report = diagnostics.format_report(results)
+            self.main_win.log(f"[{dev.alias}] 自检结果：{report}" if "\n" not in report else f"[{dev.alias}] 自检结果：\n{report}")
         threading.Thread(target=_run, daemon=True).start()
 
 

@@ -6,11 +6,14 @@
 而不是一台暂时没插线/没连网就从列表里消失、下次还得重新走一遍添加流程。
 """
 import subprocess
-from dataclasses import dataclass, field
+import re
+from dataclasses import dataclass
 
-from adb import Adb
+from adb import Adb, _run_hidden
 import device_profile
 import device_registry
+
+_AUTO_ALIAS_RE = re.compile(r"^手机-\d{2}$")
 
 
 @dataclass
@@ -39,7 +42,7 @@ def _list_serials(adb_path: str) -> list[str]:
     无线调试的手机会同时列出 ip:port 和 mDNS 自动发现的 adb-xxx._adb-tls-connect._tcp
     两个"序列号"，其实是同一台物理设备——2026-07-05 实测发现，不过滤会把一台手机
     在设备列表里显示成两台。只保留 ip:port / USB 序列号形式，过滤掉 mDNS 名字。"""
-    proc = subprocess.run([adb_path, "devices"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=15)
+    proc = _run_hidden([adb_path, "devices"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=15)
     out = proc.stdout.decode("utf-8", "replace")
     serials = []
     for line in out.splitlines()[1:]:
@@ -69,6 +72,18 @@ def discover_devices(adb_path: str) -> list[Device]:
         next_idx += 1
         return alias
 
+    def _default_alias_for_profile(profile: dict | None) -> str:
+        base = profile.get("display_name") if profile else ""
+        if not base:
+            return _next_default_alias()
+        alias = base
+        suffix = 2
+        while alias in used_defaults:
+            alias = f"{base}-{suffix:02d}"
+            suffix += 1
+        used_defaults.add(alias)
+        return alias
+
     for serial in _list_serials(adb_path):
         adb = Adb(adb_path, serial)
         try:
@@ -80,8 +95,12 @@ def discover_devices(adb_path: str) -> list[Device]:
         except Exception:
             hw_serial = serial  # 取不到硬件序列号时退化用连接串（离线后可能认不出，不影响本次使用）
 
+        profile = device_profile.get_profile(model)
         kd = known.get(hw_serial)
-        alias = kd.alias if (kd and kd.alias) else _next_default_alias()
+        if kd and kd.alias and not _AUTO_ALIAS_RE.match(kd.alias):
+            alias = kd.alias
+        else:
+            alias = _default_alias_for_profile(profile)
         device_registry.upsert(hw_serial, alias=alias, model=model, last_seen_addr=serial)
         seen_hw.add(hw_serial)
 
@@ -90,7 +109,7 @@ def discover_devices(adb_path: str) -> list[Device]:
             hw_serial=hw_serial,
             model=model,
             alias=alias,
-            profile=device_profile.get_profile(model),
+            profile=profile,
             adb=adb,
             online=True,
         ))

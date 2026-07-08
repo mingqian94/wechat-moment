@@ -13,6 +13,15 @@ import subprocess
 import time
 from pathlib import Path
 
+_CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+
+
+def _run_hidden(cmd: list[str], **kwargs):
+    """Run adb without flashing a console window in the packaged GUI app."""
+    if _CREATE_NO_WINDOW:
+        kwargs.setdefault("creationflags", _CREATE_NO_WINDOW)
+    return subprocess.run(cmd, **kwargs)
+
 # 朋友圈素材专用文件夹：推到这里的图/视频会被微信相册识别成独立相簿
 # "朋友圈素材"，图片位置固定，是自动化选图可复现的关键（2026-07-02 实测确认）。
 MOMENTS_FOLDER = "/sdcard/Pictures/朋友圈素材"
@@ -26,8 +35,8 @@ class AdbError(Exception):
 def pair(adb_path: str, pair_addr: str, code: str) -> tuple[bool, str]:
     """无线调试配对。pair_addr 是配对页面显示的 ip:port（配对码旁边那个），
     跟真正用来连接的 ip:port **不是同一个**——这是无线调试的常见坑，两个都要用户提供。"""
-    proc = subprocess.run([adb_path, "pair", pair_addr, code],
-                          stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=20)
+    proc = _run_hidden([adb_path, "pair", pair_addr, code],
+                       stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=20)
     out = proc.stdout.decode("utf-8", "replace") + proc.stderr.decode("utf-8", "replace")
     return ("Successfully paired" in out), out
 
@@ -35,8 +44,8 @@ def pair(adb_path: str, pair_addr: str, code: str) -> tuple[bool, str]:
 def connect(adb_path: str, connect_addr: str) -> tuple[bool, str]:
     """连接到设备（USB 已连的设备不需要这步；无线调试配对成功后要单独 connect 到
     连接端口，这个端口跟配对端口不同）。"""
-    proc = subprocess.run([adb_path, "connect", connect_addr],
-                          stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=20)
+    proc = _run_hidden([adb_path, "connect", connect_addr],
+                       stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=20)
     out = proc.stdout.decode("utf-8", "replace") + proc.stderr.decode("utf-8", "replace")
     return ("connected" in out or "already" in out), out
 
@@ -56,7 +65,7 @@ class Adb:
     def _run(self, args: list[str], binary: bool = False, timeout: float = 30):
         """执行 adb -s <serial> <args>。binary=True 时返回 stdout 原始字节。"""
         cmd = [self.adb_path, "-s", self.serial, *args]
-        proc = subprocess.run(
+        proc = _run_hidden(
             cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -72,7 +81,7 @@ class Adb:
         # Windows 版 adb.exe 接收 argv 里的中文时可能按本机代码页降级成 "????"；
         # 远端中文目录（如 /sdcard/Pictures/朋友圈素材）必须走 stdin 传 UTF-8。
         if any(ord(ch) > 127 for ch in cmd):
-            proc = subprocess.run(
+            proc = _run_hidden(
                 [self.adb_path, "-s", self.serial, "shell"],
                 input=(cmd + "\nexit\n").encode("utf-8"),
                 stdout=subprocess.PIPE,
@@ -119,7 +128,7 @@ class Adb:
     def _run_global(self, args: list[str], timeout: float = 20):
         """不带 -s 的全局命令（connect/devices）。"""
         cmd = [self.adb_path, *args]
-        proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=timeout)
+        proc = _run_hidden(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=timeout)
         return (proc.stdout.decode("utf-8", "replace"),
                 proc.stderr.decode("utf-8", "replace"),
                 proc.returncode)
