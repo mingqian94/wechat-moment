@@ -133,26 +133,45 @@ def discover_devices(adb_path: str) -> list[Device]:
     try:
         import ios_device
 
-        for item in ios_device.list_devices():
-            udid = item["udid"]
-            kd = known.get(udid)
+        for item in ios_device.list_all_devices():
+            identity = item["udid"]
+            connection = item.get("connection") or "USB"
+            model = f"{item.get('model') or 'iPhone'} iOS {item.get('version') or ''}".strip()
+            name = item.get("name") or "iPhone"
+            kd = known.get(identity)
+            if not kd and connection == "WiFi":
+                kd = next(
+                    (
+                        k
+                        for k in known.values()
+                        if k.platform == "ios" and k.model == model and k.alias in {name, item.get("name")}
+                    ),
+                    None,
+                )
+                if kd:
+                    identity = kd.hw_serial
             if kd and kd.alias and not _AUTO_ALIAS_RE.match(kd.alias):
                 alias = kd.alias
             else:
-                alias = item.get("name") or _next_default_alias()
-            model = f"{item.get('model') or 'iPhone'} iOS {item.get('version') or ''}".strip()
-            device_registry.upsert(udid, alias=alias, model=model, last_seen_addr="USB", platform="ios")
-            seen_hw.add(udid)
+                alias = name or _next_default_alias()
+            device_registry.upsert(
+                identity,
+                alias=alias,
+                model=model,
+                last_seen_addr=item.get("host") or connection,
+                platform="ios",
+            )
+            seen_hw.add(identity)
             devices.append(Device(
-                serial=udid,
-                hw_serial=udid,
+                serial=item.get("host") or identity,
+                hw_serial=identity,
                 model=model,
                 alias=alias,
                 profile=None,
                 adb=None,
                 online=True,
                 platform="ios",
-                ios=ios_device.IosController(udid),
+                ios=ios_device.IosController(identity, host=item.get("host") or ""),
             ))
     except Exception:
         # Android 主流程不能因为 iPhone 依赖缺失而不可用。

@@ -1,11 +1,15 @@
-# 朋友圈发布助手 · 手机版（ADB 全自动）
+# 朋友圈发布助手 · 手机版（iPhone 优先 / Android 已验证）
 
-PC 通过 ADB 驱动安卓真机，自动完成发朋友圈。配套 20 部真机、20 个微信号的客户场景：
+> 2026-07-08 方向更新：客户明确要求必须 iPhone。Android ADB 全自动路线仍保留为已验证备用方案，
+> 但后续开发主线切到 iPhone。
+
+Android 路线：PC 通过 ADB 驱动安卓真机，自动完成发朋友圈。配套 20 部真机、20 个微信号的客户场景：
 每台手机独立设备指纹、可各走 SIM 流量，**串行**发布（一台发完再下一台），
 风控隔离性远好于"一台 PC 多开 20 个微信"（后者已实测会触发风控）。
 
 跟 PC 版（`wechat-moment`）是**两个独立项目**：PC 版一台电脑多开微信、图像识别操作 PC 客户端；
-本项目驱动手机真机。调度/养号/重试的**思路**复用 PC 版，执行层完全不同。
+本项目驱动手机真机。调度/养号/重试的**思路**复用 PC 版，执行层完全不同。iPhone 路线目前走
+`pymobiledevice3`/CoreDevice/WiFi lockdown 探索，不能直接复用 Android 坐标点击。
 
 ---
 
@@ -95,6 +99,17 @@ iPhone13,3 / iOS 26.5 上验证：
 因此程序里 iPhone 只作为**半自动设备**：任务到点后，程序检查开发者模式、复制文案到
 iPhone 剪贴板、打开微信，然后任务标记“待确认”。操作员需要自己进入朋友圈、从相册选素材、
 粘贴文案并发表。不要把 iPhone 模式对外说成全自动发布。
+
+2026-07-08 晚补充：
+
+- 客户已明确必须 iPhone，后续主线改为 iPhone。
+- USB 下已验证：识别设备、开发者模式、挂载 DeveloperDiskImage、打开微信、复制文案。
+- WiFi 下已验证：`192.168.1.34` 可通过 lockdown `62078` 读取 iPhone14,2 / iOS 26.5.2；
+  程序已加入 WiFi 发现兜底（Bonjour + ARP/62078 探测），GUI 可显示同 WiFi iPhone 在线。
+- WiFi 下未跑通：`developer core-device ... --userspace` 仍报 `Device is not connected`；
+  `remote start-tunnel -t wifi` 需要管理员 tunnel，当前未拿到可用 RSD 地址。
+- 全自动点击仍未跑通：iOS 26.5.x 的 CoreDevice HID 要求 iOS 27.0+，WDA/Appium 需要签名 Runner，
+  这是下一阶段 iPhone 全自动的关键技术风险。
 
 ### 机型坐标 Profile 库
 

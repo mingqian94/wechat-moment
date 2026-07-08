@@ -30,6 +30,8 @@ a = Analysis(
         "pymobiledevice3.cli.mounter",
         "pymobiledevice3.cli.developer",
         "pymobiledevice3.cli.developer.core_device",
+        "pymobiledevice3.bonjour",
+        "pymobiledevice3.lockdown",
         "logger",
         "publisher",
         "scheduler",

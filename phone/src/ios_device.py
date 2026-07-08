@@ -15,10 +15,13 @@ iPhone 控制封装。
 """
 import json
 import os
+import re
+import socket
 import subprocess
 import sys
 import tempfile
 import threading
+import asyncio
 from dataclasses import dataclass
 from pathlib import Path
 from contextlib import redirect_stderr, redirect_stdout
@@ -130,6 +133,7 @@ def _run(args: list[str], timeout: float = 30, text: str | None = None,
 @dataclass
 class IosController:
     udid: str
+    host: str = ""
 
     def copy_text(self, text: str):
         if not text:
@@ -180,5 +184,110 @@ def list_devices() -> list[dict]:
             "name": d.get("DeviceName") or "iPhone",
             "model": d.get("ProductType") or "iPhone",
             "version": d.get("ProductVersion") or "",
+            "connection": "USB",
         })
     return result
+
+
+def _fix_ios_name(value: str | None) -> str:
+    """Best-effort fix for Chinese device names returned mojibake from WiFi lockdown."""
+    if not value:
+        return "iPhone"
+    for enc in ("latin1", "cp1252"):
+        try:
+            fixed = value.encode(enc).decode("gbk")
+            if fixed and fixed != value:
+                return fixed
+        except Exception:
+            pass
+    return value
+
+
+def _tcp_open(host: str, port: int, timeout: float = 0.8) -> bool:
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.settimeout(timeout)
+    try:
+        sock.connect((host, port))
+        return True
+    except Exception:
+        return False
+    finally:
+        sock.close()
+
+
+def _arp_hosts() -> list[str]:
+    hosts: list[str] = []
+    try:
+        proc = _run_hidden(["arp", "-a"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=5)
+        text = proc.stdout.decode("utf-8", "replace")
+    except Exception:
+        return hosts
+    for match in re.finditer(r"\b((?:192\.168|10|172\.(?:1[6-9]|2\d|3[01]))\.\d+\.\d+)\b", text):
+        ip = match.group(1)
+        if ip.endswith(".1") or ip.endswith(".255") or ip in hosts:
+            continue
+        hosts.append(ip)
+    return hosts
+
+
+async def _wifi_devices(timeout: float) -> list[dict]:
+    from pymobiledevice3.bonjour import browse_remotepairing
+    from pymobiledevice3.lockdown import create_using_tcp
+
+    devices: list[dict] = []
+    seen_hosts: set[str] = set()
+    candidate_hosts: list[str] = []
+    for answer in await browse_remotepairing(timeout=timeout):
+        for address in answer.addresses:
+            host = address.full_ip
+            if not host or ":" in host or "%" in host or host in seen_hosts:
+                continue
+            seen_hosts.add(host)
+            candidate_hosts.append(host)
+
+    manual_hosts = [h.strip() for h in os.environ.get("WM_IOS_WIFI_HOSTS", "").split(",") if h.strip()]
+    for host in [*manual_hosts, *_arp_hosts()]:
+        if host not in seen_hosts and _tcp_open(host, 62078):
+            seen_hosts.add(host)
+            candidate_hosts.append(host)
+
+    for host in candidate_hosts:
+            try:
+                lockdown = await asyncio.wait_for(create_using_tcp(host, autopair=False), timeout=4)
+                try:
+                    info = lockdown.short_info
+                    devices.append({
+                        # WiFi lockdown on this iOS build does not expose UDID in short_info.
+                        # Keep the IP as a session identity and merge with known devices by name/model.
+                        "udid": info.get("UniqueDeviceID") or f"wifi:{host}",
+                        "name": _fix_ios_name(info.get("DeviceName")) or "iPhone",
+                        "model": info.get("ProductType") or "iPhone",
+                        "version": info.get("ProductVersion") or "",
+                        "host": host,
+                        "connection": "WiFi",
+                    })
+                finally:
+                    await lockdown.close()
+            except Exception:
+                continue
+    return devices
+
+
+def list_wifi_devices(timeout: float = 3.0) -> list[dict]:
+    if not pmd3_available():
+        return []
+    try:
+        return asyncio.run(_wifi_devices(timeout))
+    except Exception:
+        return []
+
+
+def list_all_devices() -> list[dict]:
+    devices = list_devices()
+    seen = {(d.get("connection"), d.get("udid"), d.get("host")) for d in devices}
+    for d in list_wifi_devices():
+        key = (d.get("connection"), d.get("udid"), d.get("host"))
+        if key not in seen:
+            devices.append(d)
+            seen.add(key)
+    return devices
