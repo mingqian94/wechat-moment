@@ -80,6 +80,22 @@ PC 通过 ADB 驱动安卓真机，自动完成发朋友圈。配套 20 部真�
 设备列表，执行层是 ADB 驱动真机而不是操作 PC 窗口。**这是完全独立于 PC 版的新程序**，
 不共享/不修改 PC 版任何代码（`src/` 目录）。
 
+### iPhone 半自动模式（2026-07-08 新增）
+
+客户如果主要是 iPhone，短期不能照搬 Android 的“电脑远程点完整个微信流程”。已在
+iPhone13,3 / iOS 26.5 上验证：
+
+- ✅ USB 识别 iPhone（UDID 持久化，备注名会记住）
+- ✅ 开发者模式开启后可挂载 DeveloperDiskImage
+- ✅ 电脑可打开微信 `com.tencent.xin`
+- ✅ 电脑可把文案复制到 iPhone 剪贴板
+- ❌ CoreDevice 远程触控在 iOS 26.5 返回“Remote control requires iOS 27.0 or later”
+- ❌ WDA/XCUITest 路线需要签名 Runner，不适合交付前临时承诺
+
+因此程序里 iPhone 只作为**半自动设备**：任务到点后，程序检查开发者模式、复制文案到
+iPhone 剪贴板、打开微信，然后任务标记“待确认”。操作员需要自己进入朋友圈、从相册选素材、
+粘贴文案并发表。不要把 iPhone 模式对外说成全自动发布。
+
 ### 机型坐标 Profile 库
 
 20 台手机型号/分辨率不统一，坐标不能只写一套。`device_profile.py` 按 `ro.product.model`

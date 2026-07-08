@@ -30,6 +30,7 @@ class KnownDevice:
     alias: str
     model: str = ""            # 最后一次已知机型（离线时用它判断 Profile 是否就绪）
     last_seen_addr: str = ""   # 最后一次成功连接的地址，仅供参考展示（无线 ip 会变，不能用来重连）
+    platform: str = "android"  # android / ios
 
 
 def _load_all() -> dict[str, dict]:
@@ -46,11 +47,16 @@ def _save_all(registry: dict[str, dict]):
 
 
 def list_known() -> list[KnownDevice]:
-    return [KnownDevice(hw_serial=k, **v) for k, v in _load_all().items()]
+    devices = []
+    for k, v in _load_all().items():
+        data = dict(v)
+        data.setdefault("platform", "android")
+        devices.append(KnownDevice(hw_serial=k, **data))
+    return devices
 
 
 def upsert(hw_serial: str, alias: str | None = None, model: str | None = None,
-           last_seen_addr: str | None = None):
+           last_seen_addr: str | None = None, platform: str | None = None):
     """新设备第一次出现，或已知设备信息有更新（换了机型识别结果/新的连接地址）时调用。
     只更新传了值的字段，alias 已存在时不会被空值覆盖掉。"""
     registry = _load_all()
@@ -61,6 +67,8 @@ def upsert(hw_serial: str, alias: str | None = None, model: str | None = None,
         cur["model"] = model
     if last_seen_addr:
         cur["last_seen_addr"] = last_seen_addr
+    if platform:
+        cur["platform"] = platform
     registry[hw_serial] = cur
     _save_all(registry)
 

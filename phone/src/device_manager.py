@@ -25,10 +25,14 @@ class Device:
     profile: dict | None = None   # 该机型的坐标 Profile，None 表示未标定
     adb: Adb | None = None
     online: bool = True
+    platform: str = "android"
+    ios: object | None = None
 
     @property
     def ready(self) -> bool:
         """能不能立即拿去发布：在线 + 该机型已标定坐标。"""
+        if self.platform == "ios":
+            return self.online
         return self.online and self.profile is not None
 
     def rename(self, new_alias: str):
@@ -40,16 +44,25 @@ class Device:
 def _list_serials(adb_path: str) -> list[str]:
     """裸 `adb devices`，列出当前在线的设备号（不含未授权/离线的）。
     无线调试的手机会同时列出 ip:port 和 mDNS 自动发现的 adb-xxx._adb-tls-connect._tcp
-    两个"序列号"，其实是同一台物理设备——2026-07-05 实测发现，不过滤会把一台手机
-    在设备列表里显示成两台。只保留 ip:port / USB 序列号形式，过滤掉 mDNS 名字。"""
+    两个"序列号"，其实是同一台物理设备。这里不能直接过滤 mDNS：换 WiFi 后有时只有
+    mDNS 项先出现；而且 Windows 会把重名 mDNS 展示成 `adb-xxx (2)._adb...`，序列号里
+    带空格，不能用固定列 split。去重放到 discover_devices 里按硬件序列号做。"""
     proc = _run_hidden([adb_path, "devices"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=15)
     out = proc.stdout.decode("utf-8", "replace")
     serials = []
     for line in out.splitlines()[1:]:
         parts = line.split()
-        if len(parts) >= 2 and parts[1] == "device" and "_adb-tls-connect._tcp" not in parts[0]:
-            serials.append(parts[0])
-    return serials
+        if not parts:
+            continue
+        status_idx = next((i for i, p in enumerate(parts) if p in {"device", "offline", "unauthorized"}), -1)
+        if status_idx > 0 and parts[status_idx] == "device":
+            serials.append(" ".join(parts[:status_idx]))
+
+    def _sort_key(serial: str):
+        is_mdns = "_adb-tls-connect._tcp" in serial
+        return (1 if is_mdns else 0, serial)
+
+    return sorted(serials, key=_sort_key)
 
 
 def discover_devices(adb_path: str) -> list[Device]:
@@ -94,6 +107,8 @@ def discover_devices(adb_path: str) -> list[Device]:
             hw_serial = adb.shell("getprop ro.serialno").strip()
         except Exception:
             hw_serial = serial  # 取不到硬件序列号时退化用连接串（离线后可能认不出，不影响本次使用）
+        if hw_serial in seen_hw:
+            continue
 
         profile = device_profile.get_profile(model)
         kd = known.get(hw_serial)
@@ -101,7 +116,7 @@ def discover_devices(adb_path: str) -> list[Device]:
             alias = kd.alias
         else:
             alias = _default_alias_for_profile(profile)
-        device_registry.upsert(hw_serial, alias=alias, model=model, last_seen_addr=serial)
+        device_registry.upsert(hw_serial, alias=alias, model=model, last_seen_addr=serial, platform="android")
         seen_hw.add(hw_serial)
 
         devices.append(Device(
@@ -112,19 +127,50 @@ def discover_devices(adb_path: str) -> list[Device]:
             profile=profile,
             adb=adb,
             online=True,
+            platform="android",
         ))
+
+    try:
+        import ios_device
+
+        for item in ios_device.list_devices():
+            udid = item["udid"]
+            kd = known.get(udid)
+            if kd and kd.alias and not _AUTO_ALIAS_RE.match(kd.alias):
+                alias = kd.alias
+            else:
+                alias = item.get("name") or _next_default_alias()
+            model = f"{item.get('model') or 'iPhone'} iOS {item.get('version') or ''}".strip()
+            device_registry.upsert(udid, alias=alias, model=model, last_seen_addr="USB", platform="ios")
+            seen_hw.add(udid)
+            devices.append(Device(
+                serial=udid,
+                hw_serial=udid,
+                model=model,
+                alias=alias,
+                profile=None,
+                adb=None,
+                online=True,
+                platform="ios",
+                ios=ios_device.IosController(udid),
+            ))
+    except Exception:
+        # Android 主流程不能因为 iPhone 依赖缺失而不可用。
+        pass
 
     for hw_serial, kd in known.items():
         if hw_serial in seen_hw:
             continue
+        platform = kd.platform or "android"
         devices.append(Device(
             serial="",
             hw_serial=hw_serial,
             model=kd.model or "未知机型",
             alias=kd.alias,
-            profile=device_profile.get_profile(kd.model) if kd.model else None,
+            profile=device_profile.get_profile(kd.model) if platform == "android" and kd.model else None,
             adb=None,
             online=False,
+            platform=platform,
         ))
 
     return devices
@@ -135,6 +181,8 @@ def summarize(devices: list[Device]) -> str:
     for d in devices:
         if not d.online:
             status = "离线"
+        elif d.platform == "ios":
+            status = "iPhone半自动"
         else:
             status = "就绪" if d.ready else "⚠ 该机型未标定坐标"
         lines.append(f"  {d.alias} — {d.model} ({d.serial or '离线'}) — {status}")

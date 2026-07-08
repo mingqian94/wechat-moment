@@ -95,7 +95,9 @@ class App:
             if not d.online:
                 status = "离线"
             else:
-                status = "就绪" if d.ready else "⚠ 该机型未标定坐标"
+                status = "iPhone半自动" if getattr(d, "platform", "android") == "ios" else (
+                    "就绪" if d.ready else "⚠ 该机型未标定坐标"
+                )
             self.main_win.log(f"  {d.alias} — {d.model} ({d.serial or '—'}) — {status}")
 
     def _on_rescan(self):
@@ -109,11 +111,13 @@ class App:
                 self._verify_image_push_for_new_devices()
             except Exception as e:
                 self.main_win.log(f"✗ 重新扫描失败：{e}")
-            threading.Thread(target=_run, daemon=True).start()
+        threading.Thread(target=_run, daemon=True).start()
 
     def _verify_image_push_for_new_devices(self):
         """设备首次在线时顺手验证能否把合成测试图推到朋友圈素材目录。"""
         for dev in self.devices:
+            if getattr(dev, "platform", "android") == "ios":
+                continue
             if not dev.online or dev.adb is None or dev.hw_serial in self._push_verified_hw:
                 continue
             self._push_verified_hw.add(dev.hw_serial)
@@ -221,6 +225,8 @@ class App:
             return {"success": False, "reason": "设备未找到（可能已从已知设备清单移除）"}
         if not dev.online:
             return {"success": False, "reason": "设备离线，请检查手机连接"}
+        if getattr(dev, "platform", "android") == "ios":
+            return self._publish_ios(dev, task, step_log)
         if dev.profile is None:
             return {"success": False, "reason": f"机型 {dev.model} 未标定坐标"}
 
@@ -266,6 +272,26 @@ class App:
                 "reason": "流程已提交，需人工回看朋友圈确认真实发布状态",
             }
         return {"success": False, "reason": result.reason}
+
+    def _publish_ios(self, dev, task: dict, step_log) -> dict:
+        """iPhone 半自动：复制文案并打开微信。iOS 26.5 不支持电脑侧远程触控。"""
+        if dev.ios is None:
+            return {"success": False, "reason": "iPhone 控制器未初始化"}
+        try:
+            step_log("iPhone 半自动模式：检查开发者模式并挂载开发者镜像")
+            dev.ios.ensure_developer_ready()
+            if task.get("caption"):
+                step_log("复制文案到 iPhone 剪贴板")
+                dev.ios.copy_text(task.get("caption", ""))
+            step_log("打开微信，请人工进入朋友圈选择素材并粘贴文案发表")
+            dev.ios.launch_wechat()
+            return {
+                "success": True,
+                "pending_confirm": True,
+                "reason": "iPhone 已打开微信并复制文案，需人工选择素材并发表",
+            }
+        except Exception as e:
+            return {"success": False, "reason": f"iPhone 半自动失败：{e}"}
 
     def _on_start(self):
         from scheduler import Scheduler
@@ -327,7 +353,10 @@ class App:
             import diagnostics
 
             self.main_win.log(f"[{dev.alias}] 开始自检...")
-            results = diagnostics.run_diagnostics(dev.adb)
+            if getattr(dev, "platform", "android") == "ios":
+                results = diagnostics.run_ios_diagnostics(dev.ios)
+            else:
+                results = diagnostics.run_diagnostics(dev.adb)
             report = diagnostics.format_report(results)
             self.main_win.log(f"[{dev.alias}] 自检结果：{report}" if "\n" not in report else f"[{dev.alias}] 自检结果：\n{report}")
         threading.Thread(target=_run, daemon=True).start()

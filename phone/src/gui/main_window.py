@@ -115,7 +115,7 @@ class MainWindow:
         self.delete_btn = ttk.Button(ctrl_frame, text="删除", command=self._delete_selected, state="disabled")
         self.delete_btn.pack(side="right", padx=(4, 0))
 
-        self.running_warn_var = tk.StringVar(value="⚠ 发布过程中请勿操作手机（程序将自动操作微信）")
+        self.running_warn_var = tk.StringVar(value="⚠ Android 会自动操作微信；iPhone 为半自动，只负责定时打开微信并复制文案")
         tk.Label(left_frame, textvariable=self.running_warn_var, font=("", 9),
                  fg="#e67e22", bg="#fff8e1", anchor="w").pack(fill="x", pady=(0, 4))
 
@@ -355,6 +355,9 @@ class MainWindow:
             if not d.online:
                 color = "#999"
                 status = "离线"
+            elif getattr(d, "platform", "android") == "ios":
+                color = "#1565c0"
+                status = "半自动"
             elif d.ready:
                 color = "#2e7d32"
                 status = "就绪"
@@ -380,7 +383,8 @@ class MainWindow:
         for d in self.devices:
             var = tk.BooleanVar(value=d.ready)  # 离线/未标定的默认不勾
             self.dev_vars[d.hw_serial] = var
-            label = f"{d.alias}({d.model})" + ("" if d.online else " [离线]")
+            prefix = "iPhone " if getattr(d, "platform", "android") == "ios" else ""
+            label = f"{prefix}{d.alias}({d.model})" + ("" if d.online else " [离线]")
             chk = ttk.Checkbutton(self.dev_select_frame, text=label, variable=var)
             if not d.online:
                 chk.state(["disabled"])  # 离线设备选不了，避免生成一条永远发不出去的任务
@@ -484,6 +488,11 @@ class MainWindow:
         if not selected_devices:
             messagebox.showwarning("提示", "请至少选择一个设备")
             return
+        if any(getattr(d, "platform", "android") == "ios" for d in selected_devices):
+            messagebox.showinfo(
+                "iPhone 半自动模式",
+                "iPhone 当前只会到点复制文案并打开微信；请提前把素材放进 iPhone 相册，到点后人工选择素材并发表。"
+            )
         caption = self.caption_text.get("1.0", "end").rstrip("\n")
 
         t_start = self._parse_time(self.start_var.get())

@@ -124,6 +124,33 @@ def run_diagnostics(adb: Adb) -> list[CheckResult]:
     return results
 
 
+def run_ios_diagnostics(ios) -> list[CheckResult]:
+    results = []
+    if ios is None:
+        return [CheckResult("iPhone连接", False, "控制器未初始化")]
+
+    try:
+        ios.ensure_developer_ready()
+        results.append(CheckResult("开发者模式/镜像", True))
+    except Exception as e:
+        results.append(CheckResult("开发者模式/镜像", False, str(e)))
+        return results
+
+    try:
+        ios.copy_text("朋友圈发布助手自检")
+        results.append(CheckResult("复制文案", True))
+    except Exception as e:
+        results.append(CheckResult("复制文案", False, str(e)))
+
+    try:
+        ios.launch_wechat()
+        results.append(CheckResult("打开微信", True))
+    except Exception as e:
+        results.append(CheckResult("打开微信", False, str(e)))
+
+    return results
+
+
 def format_report(results: list[CheckResult]) -> str:
     failed = [r for r in results if not r.ok]
     if not failed:
